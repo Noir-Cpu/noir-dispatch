@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigserial, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigserial, boolean, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 // lat/lng are plain numeric, not PostGIS geometry (ADR 0003): PGlite runs the same schema in tests.
 const coord = (name: string) => numeric(name, { precision: 9, scale: 6, mode: "number" });
@@ -8,6 +8,7 @@ const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" 
 export const customers = pgTable("customers", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  isSimulated: boolean("is_simulated").notNull().default(false),
   createdAt: ts("created_at").defaultNow().notNull(),
 });
 
@@ -31,6 +32,7 @@ export const drivers = pgTable(
     lat: coord("lat").notNull(),
     lng: coord("lng").notNull(),
     locationAt: ts("location_at"),
+    isSimulated: boolean("is_simulated").notNull().default(false),
     createdAt: ts("created_at").defaultNow().notNull(),
   },
   (t) => [index("drivers_status_idx").on(t.status)],
@@ -43,6 +45,8 @@ export const orders = pgTable(
     customerId: text("customer_id").notNull().references(() => customers.id),
     stationId: text("station_id").notNull().references(() => stations.id),
     idempotencyKey: text("idempotency_key").notNull(),
+    /** Placed by the simulator. Only these are ever deleted by the cleanup job. */
+    isSimulated: boolean("is_simulated").notNull().default(false),
     // Projection of the event log. order_events is the source of truth; replay rebuilds these.
     state: text("state").notNull(),
     version: integer("version").notNull(),
@@ -126,3 +130,62 @@ export const paymentWebhookEvents = pgTable("payment_webhook_events", {
   type: text("type").notNull(),
   receivedAt: ts("received_at").notNull(),
 });
+
+// Better Auth tables (GitHub sign-in for the ops console only).
+export const user = pgTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: boolean("email_verified").default(false).notNull(),
+  image: text("image"),
+  createdAt: ts("created_at").defaultNow().notNull(),
+  updatedAt: ts("updated_at").defaultNow().notNull(),
+});
+
+export const session = pgTable(
+  "session",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: ts("expires_at").notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: ts("created_at").defaultNow().notNull(),
+    updatedAt: ts("updated_at").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  },
+  (t) => [index("session_userId_idx").on(t.userId)],
+);
+
+export const account = pgTable(
+  "account",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: ts("access_token_expires_at"),
+    refreshTokenExpiresAt: ts("refresh_token_expires_at"),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: ts("created_at").defaultNow().notNull(),
+    updatedAt: ts("updated_at").notNull(),
+  },
+  (t) => [index("account_userId_idx").on(t.userId)],
+);
+
+export const verification = pgTable(
+  "verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: ts("expires_at").notNull(),
+    createdAt: ts("created_at").defaultNow().notNull(),
+    updatedAt: ts("updated_at").defaultNow().notNull(),
+  },
+  (t) => [index("verification_identifier_idx").on(t.identifier)],
+);

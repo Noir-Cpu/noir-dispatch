@@ -13,7 +13,7 @@ const k = await createLocalEngine({
   startAt: Date.now(),
   metrics: (m) => m.type === "assignment" && sim?.recordAssignment(m.ms, m.assigned),
 });
-await startLocalServer(k, port);
+await startLocalServer(k, port, { open: env.DEV_AUTH !== "0" });
 
 if (env.SIM !== "0") {
   sim = new Simulation({

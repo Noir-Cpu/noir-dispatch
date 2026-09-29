@@ -1,0 +1,26 @@
+name: Simulator
+# Keeps the deployed demo alive with short bursts of simulated drivers and orders.
+# OFF by default: it only runs when the repository variable SIMULATOR_ENABLED is "true".
+# Needs: variable SIMULATOR_URL (e.g. https://noir-dispatch-api.noir-cpu.workers.dev), secret SIM_TOKEN.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: simulator
+  cancel-in-progress: false
+jobs:
+  burst:
+    if: vars.SIMULATOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      # 240 s and at most 400 requests per burst, 96 bursts a day: see README "Request budget".
+      - run: npm run sim:http -w @noir/sim -- --url "$SIM_URL" --seed "$GITHUB_RUN_NUMBER" --seconds 240 --max-requests 400
+        env:
+          SIM_TOKEN: ${{ secrets.SIM_TOKEN }}
+          SIM_URL: ${{ vars.SIMULATOR_URL }}

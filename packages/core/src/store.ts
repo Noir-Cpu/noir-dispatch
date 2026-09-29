@@ -2,10 +2,10 @@ import type { Fuel, OrderEvent, OrderView } from "./order-machine";
 
 export type DriverStatus = "offline" | "available" | "busy";
 
-export type Customer = { id: string; name: string };
+export type Customer = { id: string; name: string; isSimulated?: boolean };
 export type Station = { id: string; name: string; lat: number; lng: number; rating: number; prices: Record<Fuel, number> };
-export type Driver = { id: string; name: string; status: DriverStatus; lat: number; lng: number; locationAt: number | null };
-export type OrderRecord = { id: string; view: OrderView };
+export type Driver = { id: string; name: string; status: DriverStatus; lat: number; lng: number; locationAt: number | null; isSimulated?: boolean };
+export type OrderRecord = { id: string; view: OrderView; isSimulated: boolean };
 export type StoredEvent = { seq: number; event: OrderEvent };
 
 export type PaymentStatus = "requires_payment" | "succeeded" | "failed" | "canceled" | "refunded";
@@ -49,6 +49,7 @@ export interface Store {
   insertOrder(i: {
     id: string;
     idempotencyKey: string;
+    isSimulated?: boolean;
     view: OrderView;
     event: OrderEvent;
     payment: Payment;
@@ -70,6 +71,10 @@ export interface Store {
   setPaymentStatus(intentId: string, to: PaymentStatus, from: PaymentStatus): Promise<boolean>;
   markRefunded(i: { paymentId: string; refundId: string; refundedCents: number }): Promise<boolean>;
   countCharges(paymentId?: string): Promise<number>;
+  /** Retention: delete driver_locations older than `beforeMs`. Returns rows deleted. */
+  deleteLocationsBefore(beforeMs: number): Promise<number>;
+  /** Cleanup: delete finished simulated orders (and their events, payments, points) last updated before `beforeMs`. */
+  deleteSimulatedOrders(beforeMs: number): Promise<number>;
   recordWebhookEvent(eventId: string, type: string, at: number): Promise<boolean>;
   countWebhookEvents(): Promise<number>;
 }

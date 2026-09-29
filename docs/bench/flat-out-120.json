@@ -1,0 +1,56 @@
+{
+  "note": "local, single-process numbers (PGlite in memory, loopback WebSocket); not a production measurement",
+  "seed": 42,
+  "virtualMinutes": 79,
+  "orders": {
+    "placed": 131,
+    "completed": 131,
+    "cancelled": 0,
+    "open": 0
+  },
+  "cancelReasons": {},
+  "declines": 1,
+  "pings": 25040,
+  "persistedLocationRows": 7829,
+  "assignmentMs": {
+    "n": 132,
+    "p50": 2.3941720000002533,
+    "p95": 3.687079000000267,
+    "max": 5.170011000000159
+  },
+  "placedToAssignedSeconds": {
+    "n": 131,
+    "p50": 50,
+    "p95": 90
+  },
+  "readyToAssignedSeconds": {
+    "n": 131,
+    "p50": 0,
+    "p95": 0,
+    "max": 4.827880126953125
+  },
+  "locationToSubscriberMs": {
+    "n": 20618,
+    "p50": 0.0017330000000583823,
+    "p95": 0.004157999999733875,
+    "max": 0.6280890000007275
+  },
+  "locationToLoopbackWebSocketMs": {
+    "n": 20582,
+    "p50": 21.553052999999636,
+    "p95": 824.3134540000001,
+    "max": 1059.0333930000006
+  },
+  "wsMessagesReceived": 20582,
+  "wallSeconds": 6.9,
+  "config": {
+    "seed": 42,
+    "drivers": 50,
+    "ordersPerHour": 120,
+    "tickSeconds": 5,
+    "speedKmh": 40,
+    "maxDropoffKm": 4,
+    "declineRate": 0.03
+  },
+  "timeScale": "flat out (no pacing)"
+}

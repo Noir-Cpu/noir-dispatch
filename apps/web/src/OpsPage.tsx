@@ -1,18 +1,37 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { api, money, STATE_LABEL, type OrderRow } from "./api";
+import { ApiError, api, money, STATE_LABEL, type OrderRow } from "./api";
+import { authClient } from "./auth-client";
 import { clock, useLivePositions } from "./hooks";
 import { LiveMap, type Pin } from "./LiveMap";
 
 const LIVE_STATES = new Set(["assigned", "en_route", "arrived", "delivering"]);
 
 export function OpsPage() {
+  const me = useQuery({ queryKey: ["ops-me"], queryFn: api.me, retry: false });
+  if (me.isPending) return <p className="meta">Checking sign-in…</p>;
+  if (me.error) {
+    const signedOut = me.error instanceof ApiError && me.error.status === 401;
+    return (
+      <div className="stack">
+        <h1>Operations</h1>
+        <p>{signedOut ? "The operations console is restricted to allow-listed GitHub accounts." : "Could not check your sign-in."}</p>
+        <button className="primary" onClick={() => void authClient.signIn.social({ provider: "github", callbackURL: "/ops" })}>
+          Sign in with GitHub
+        </button>
+      </div>
+    );
+  }
+  return <OpsConsole login={me.data.login} />;
+}
+
+function OpsConsole({ login }: { login: string }) {
   const [showAll, setShowAll] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const orders = useQuery({ queryKey: ["ops-orders", showAll], queryFn: () => api.orders(!showAll), refetchInterval: 2000 });
-  const drivers = useQuery({ queryKey: ["drivers"], queryFn: api.drivers, refetchInterval: 2000 });
+  const orders = useQuery({ queryKey: ["ops-orders", showAll], queryFn: () => api.orders(!showAll), refetchInterval: 5000 });
+  const drivers = useQuery({ queryKey: ["drivers"], queryFn: api.drivers, refetchInterval: 5000 });
   const stations = useQuery({ queryKey: ["stations"], queryFn: api.stations });
-  const detail = useQuery({ queryKey: ["order", selected], queryFn: () => api.order(selected!), enabled: !!selected, refetchInterval: 2000 });
+  const detail = useQuery({ queryKey: ["order", selected], queryFn: () => api.order(selected!), enabled: !!selected, refetchInterval: 5000 });
 
   const rows = orders.data ?? [];
   const activeRows = rows.filter((o) => LIVE_STATES.has(o.state) && o.driverId);
@@ -43,6 +62,7 @@ export function OpsPage() {
   return (
     <div className="stack wide">
       <h1>Operations</h1>
+      <p className="meta">Signed in as {login}</p>
       <dl className="kpis" aria-label="Summary">
         <div><dt>Active orders</dt><dd data-testid="kpi-active">{counts.active}</dd></div>
         <div><dt>Drivers available</dt><dd>{counts.available}</dd></div>

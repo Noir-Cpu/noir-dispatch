@@ -9,6 +9,7 @@ import type { Intent, PaymentProvider, ProviderEvent } from "./types";
  */
 export class StripeProvider implements PaymentProvider {
   readonly name = "stripe";
+  readonly signatureHeader = "stripe-signature";
   constructor(readonly secretKey: string, readonly webhookSecret: string) {}
   createIntent(): Promise<Intent> {
     throw new Error("StripeProvider is a stub: needs test-mode keys and implementation");

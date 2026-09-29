@@ -32,8 +32,8 @@ Numbers in the README come from local, in-process runs and are labelled so. Prod
 
 ## 5. Scope
 
-**MVP:** order state machine, simulator, live tracking, ops console.
-**v1.1:** payments, cancellations, ratings.
+**MVP:** order state machine, simulator (in-process and HTTP), live tracking, ops console with sign-in.
+**v1.1:** payments (fake provider; Paystack test-mode adapter), cancellations, retention, ratings.
 **v2:** batched deliveries, surge-aware dispatch.
 
 ## 6. Key design decisions
@@ -47,6 +47,9 @@ Each is an ADR in `docs/adr/`.
 5. **Payments behind a provider interface (ADR 0006).** Test provider behaves like Stripe/Paystack: intents, idempotency keys, HMAC-signed webhooks, refund on cancel.
 6. **Live tracking in one Durable Object per delivery (ADR 0007).** Live position is not written to Postgres; a downsampled track (one point per 30 s) is.
 7. **Expo for the driver app (ADR 0008).** Background location needs a native-capable runtime; Expo keeps TypeScript across API, web and mobile.
+8. **Roles and ops auth (ADR 0010).** Anonymous customers (order token) and drivers; ops console behind GitHub sign-in with an allow-list (default `Noir-Cpu`); every role-declaring request is rate limited.
+9. **HTTP-mode simulator with a request budget (ADR 0011).** Keeps the deployed demo alive without touching real records or the free quota.
+10. **Paystack test-mode adapter, fake provider by default (ADR 0012); retention in the Worker cron (ADR 0013).**
 
 ## 7. Flows
 
@@ -57,7 +60,7 @@ Each is an ADR in `docs/adr/`.
 
 ## 8. Data model
 
-`customers`, `stations` (location, prices, rating), `drivers` (status, last position), `orders` (projection: state, version, driver), `order_events` (append-only, unique per order and sequence), `driver_locations` (downsampled), `payments` (intent, status, refund), `payment_webhook_events` (dedupe by provider event id).
+Better Auth tables (`user`, `session`, `account`, `verification`), `is_simulated` flags on customers, drivers and orders, `customers`, `stations` (location, prices, rating), `drivers` (status, last position), `orders` (projection: state, version, driver), `order_events` (append-only, unique per order and sequence), `driver_locations` (downsampled, 7-day retention), `payments` (intent, status, refund), `payment_webhook_events` (dedupe by provider event id).
 
 ## 9. Capacity estimate
 
@@ -67,5 +70,5 @@ Each is an ADR in `docs/adr/`.
 
 1. Real deployment needs a Neon project and Cloudflare secrets (docs/SETUP.md).
 2. Driver ETA quality: haversine ignores roads; ORS needs a key and has rate limits.
-3. No authentication in the simulated demo: actors are declared by the caller. Real use needs sessions and per-actor authorisation.
+3. Customers and drivers are anonymous by design (ADR 0010); a real product needs accounts, driver vetting and per-driver credentials.
 4. Regulation: any real-world pilot needs licensed carriers and dangerous-goods compliance.

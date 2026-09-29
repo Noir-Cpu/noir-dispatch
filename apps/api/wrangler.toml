@@ -24,3 +24,11 @@ new_sqlite_classes = ["TrackingRoom"]
 # Dispatch tick. Uses 1 of the 5 cron triggers on the account.
 [triggers]
 crons = ["* * * * *"]
+
+# Per-client rate limit for every request that declares a role (see apps/api/src/app.ts `limited`).
+[[ratelimits]]
+name = "RATE_LIMIT"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 60
+  period = 60

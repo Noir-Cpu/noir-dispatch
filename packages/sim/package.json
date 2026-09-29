@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc -p .",
     "test": "vitest run",
-    "sim": "tsx src/cli.ts"
+    "sim": "tsx src/cli.ts",
+    "sim:http": "tsx src/cli-http.ts"
   },
   "dependencies": { "@noir/core": "*", "@noir/engine": "*" },
   "devDependencies": { "@types/node": "^22.0.0", "tsx": "^4.19.0", "vitest": "^5" }

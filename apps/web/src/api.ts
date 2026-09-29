@@ -33,21 +33,51 @@ export type TrackPoint = { orderId: string; driverId: string; lat: number; lng: 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((body as { message?: string; error?: string }).message ?? (body as { error?: string }).error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError((body as { message?: string; error?: string }).message ?? (body as { error?: string }).error ?? `HTTP ${res.status}`, res.status);
   return body as T;
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(message: string, readonly status = 0) {
+    super(message);
+  }
+}
+
+const tokenKey = (id: string) => `dispatch.token.${id}`;
+function saveToken(id: string, token: string) {
+  try {
+    localStorage.setItem(tokenKey(id), token);
+  } catch {
+    /* private mode: the order still works for this page load only if the token is kept in memory */
+    memoryTokens.set(id, token);
+  }
+}
+const memoryTokens = new Map<string, string>();
+function tokenHeader(id: string): Record<string, string> {
+  let t: string | null | undefined = memoryTokens.get(id);
+  try {
+    t = localStorage.getItem(tokenKey(id)) ?? t;
+  } catch {
+    /* ignore */
+  }
+  return t ? { "x-order-token": t } : {};
+}
 
 export const api = {
   stations: () => call<{ stations: Station[] }>("/stations").then((r) => r.stations),
   drivers: () => call<{ drivers: Driver[] }>("/drivers").then((r) => r.drivers),
   orders: (active = true) => call<{ orders: OrderRow[] }>(`/orders${active ? "?active=1" : ""}`).then((r) => r.orders),
   order: (id: string) => call<{ order: OrderDto }>(`/orders/${id}`).then((r) => r.order),
-  place: (body: unknown, key: string) =>
-    call<{ order: OrderDto }>("/orders", { method: "POST", body: JSON.stringify(body), headers: { "idempotency-key": key } }).then((r) => r.order),
-  event: (id: string, body: unknown) => call<{ order: OrderDto }>(`/orders/${id}/events`, { method: "POST", body: JSON.stringify(body) }).then((r) => r.order),
-  pay: (id: string) => call<unknown>(`/dev/pay/${id}`, { method: "POST" }),
+  place: async (body: unknown, key: string) => {
+    const r = await call<{ order: OrderDto; orderToken: string | null }>("/orders", { method: "POST", body: JSON.stringify(body), headers: { "idempotency-key": key } });
+    if (r.orderToken) saveToken(r.order.id, r.orderToken);
+    return r.order;
+  },
+  // The order token is what proves this browser placed the order. Anonymous customers, no accounts.
+  event: (id: string, body: unknown) =>
+    call<{ order: OrderDto }>(`/orders/${id}/events`, { method: "POST", body: JSON.stringify(body), headers: tokenHeader(id) }).then((r) => r.order),
+  pay: (id: string) => call<unknown>(`/dev/pay/${id}`, { method: "POST", headers: tokenHeader(id) }),
+  me: () => call<{ login: string }>("/ops/me"),
 };
 
 export const rand = (bytes = 8) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");

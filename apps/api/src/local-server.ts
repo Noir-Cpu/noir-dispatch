@@ -10,9 +10,16 @@ import type { TrackHub } from "@noir/core";
 import type { LocalEngine } from "@noir/engine/local";
 import { createApp } from "./app";
 
-export async function startLocalServer(k: LocalEngine, port: number) {
+export const DEV_ORDER_TOKEN_SECRET = "dev-only-order-token-secret";
+
+export async function startLocalServer(k: LocalEngine, port: number, opts: { open?: boolean } = {}) {
   const hub = k.engine.hub as TrackHub;
-  const api = createApp({ engine: () => k.engine, devPay: (_env, orderId) => k.payOrder(orderId) });
+  // Dev mode has no GitHub OAuth: the ops console is open unless DEV_AUTH=0 (then it behaves as signed out).
+  const api = createApp({
+    engine: () => k.engine,
+    devPay: (_env, orderId) => k.payOrder(orderId),
+    opsSession: opts.open === false ? undefined : async () => ({ login: "dev" }),
+  });
 
   const dist = fileURLToPath(new URL("../../web/dist", import.meta.url));
   const relDist = "../web/dist";
@@ -25,7 +32,7 @@ export async function startLocalServer(k: LocalEngine, port: number) {
     return c.html(readFileSync(`${dist}/index.html`, "utf8")); // single-page-app fallback
   });
 
-  const server = serve({ fetch: (req) => root.fetch(req, { DEV_TOOLS: "1" }), port }) as Server;
+  const server = serve({ fetch: (req) => root.fetch(req, { DEV_TOOLS: "1", ORDER_TOKEN_SECRET: DEV_ORDER_TOKEN_SECRET, OPS_ALLOWED_GITHUB: "dev" }), port }) as Server;
 
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", async (req, socket, head) => {

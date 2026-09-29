@@ -1,6 +1,6 @@
 # ADR 0009: PGlite dev mode, and no authentication in the simulated demo
 
-Status: accepted
+Status: accepted (auth consequence superseded by ADR 0010)
 
 **Context.** No Neon database exists yet, and reviewers should be able to run the whole thing with `npm install`.
 

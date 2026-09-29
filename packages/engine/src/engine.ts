@@ -1,6 +1,7 @@
 import {
   TrackHub,
   type TrackPublisher,
+  WebhookIgnored,
   WebhookSignatureError,
   rankDrivers,
   transition,
@@ -57,9 +58,11 @@ export type PlaceInput = {
   dropoff: Dropoff;
   note?: string;
   idempotencyKey: string;
+  /** Flags the order (and only the order) as simulator traffic, so cleanup may delete it. */
+  isSimulated?: boolean;
 };
 
-export type OrderDetail = { id: string; view: OrderView; events: StoredEvent[]; payment: Payment | null };
+export type OrderDetail = { id: string; isSimulated: boolean; view: OrderView; events: StoredEvent[]; payment: Payment | null };
 
 // Coordinates are stored as numeric(9,6) (about 0.1 m), so events carry the same precision and replay matches the projection exactly.
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -118,6 +121,7 @@ export class Engine {
     const res = await this.store.insertOrder({
       id,
       idempotencyKey: input.idempotencyKey,
+      isSimulated: input.isSimulated,
       view: r.view,
       event,
       payment: {
@@ -140,7 +144,7 @@ export class Engine {
     const rec = await this.store.getOrder(id);
     if (!rec) return null;
     const [events, payment] = await Promise.all([this.store.listEvents(id), this.store.getPaymentByOrder(id)]);
-    return { id, view: rec.view, events, payment };
+    return { id, isSimulated: rec.isSimulated, view: rec.view, events, payment };
   }
 
   /**
@@ -274,10 +278,39 @@ export class Engine {
     }
   }
 
+  // ---- retention ------------------------------------------------------------------------------
+
+  /** Delete raw location points older than `locationDays`, and finished simulated orders older than `simulatedHours`. */
+  async runRetention(o: { locationDays?: number; simulatedHours?: number } = {}) {
+    const now = this.clock();
+    const locations = await this.store.deleteLocationsBefore(now - (o.locationDays ?? 7) * 86_400_000);
+    const simulatedOrders = await this.store.deleteSimulatedOrders(now - (o.simulatedHours ?? 24) * 3_600_000);
+    return { locations, simulatedOrders };
+  }
+
+  /** The engine's clock (virtual in tests and the simulator). */
+  now() {
+    return this.clock();
+  }
+
+  get paymentProvider() {
+    return this.deps.payments.name;
+  }
+
+  get signatureHeader() {
+    return this.deps.payments.signatureHeader;
+  }
+
   // ---- payments -------------------------------------------------------------------------------
 
   async handleWebhook(rawBody: string, signature: string | null): Promise<{ status: "processed" | "duplicate" | "ignored" }> {
-    const event = await this.deps.payments.verifyWebhook(rawBody, signature, this.clock());
+    let event;
+    try {
+      event = await this.deps.payments.verifyWebhook(rawBody, signature, this.clock());
+    } catch (e) {
+      if (e instanceof WebhookIgnored) return { status: "ignored" };
+      throw e;
+    }
     const payment = await this.store.getPaymentByIntent(event.intentId);
     if (!payment) {
       await this.store.recordWebhookEvent(event.id, event.type, this.clock());

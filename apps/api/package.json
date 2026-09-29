@@ -13,11 +13,13 @@
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@hono/zod-validator": "^0.9.1",
+    "better-auth": "^1.7.6",
     "@noir/core": "*",
     "@noir/db": "*",
     "@noir/engine": "*",
     "@noir/sim": "*",
     "@sentry/cloudflare": "^11.1.0",
+    "drizzle-orm": "^0.45.3",
     "hono": "^4.6.0",
     "ws": "^8.18.0",
     "zod": "^4"

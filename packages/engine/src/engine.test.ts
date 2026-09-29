@@ -212,3 +212,35 @@ describe("location downsampling", () => {
     expect((await k.store.listLocations({ orderId: order.id })).length).toBe(3);
   });
 });
+
+describe("retention", () => {
+  it("deletes location points older than 7 days and keeps newer ones", async () => {
+    await putDriver("d1", -33.975, 18.47);
+    const day = 86_400_000;
+    for (const ageDays of [9, 8, 6, 1]) {
+      await k.db.execute(sql`insert into driver_locations (driver_id, lat, lng, recorded_at) values ('d1', -33.9, 18.4, ${new Date(k.clock.now - ageDays * day).toISOString()}::timestamptz)`);
+    }
+    const before = (await k.store.listLocations({ driverId: "d1" })).length;
+    const r = await k.engine.runRetention({ locationDays: 7 });
+    const after = (await k.store.listLocations({ driverId: "d1" })).length;
+    expect(before).toBeGreaterThan(0);
+    expect(r.locations).toBe(before - after);
+    expect((await k.store.listLocations({ driverId: "d1" })).every((p) => p.t >= k.clock.now - 7 * day)).toBe(true);
+  });
+
+  it("expires only finished simulated orders, with their events and payments", async () => {
+    const sim = await k.engine.placeOrder({ customerId: "c1", stationId: "st-cbd", fuel: "diesel", litres: 10, dropoff: HOME, idempotencyKey: "s", isSimulated: true });
+    const real = await k.engine.placeOrder({ customerId: "c1", stationId: "st-cbd", fuel: "diesel", litres: 10, dropoff: HOME, idempotencyKey: "r" });
+    const openSim = await k.engine.placeOrder({ customerId: "c1", stationId: "st-cbd", fuel: "diesel", litres: 10, dropoff: HOME, idempotencyKey: "o", isSimulated: true });
+    await k.engine.submit(sim.order.id, { type: "order_cancelled", actor: "customer" });
+    await k.engine.submit(real.order.id, { type: "order_cancelled", actor: "customer" });
+    k.clock.now += 25 * 3_600_000;
+    expect(await k.engine.runRetention({ simulatedHours: 24 })).toMatchObject({ simulatedOrders: 1 });
+    expect(await k.engine.detail(sim.order.id)).toBeNull();
+    expect(await k.store.getPaymentByOrder(sim.order.id)).toBeNull();
+    expect(await k.engine.detail(real.order.id)).not.toBeNull(); // not simulated: never deleted
+    expect(await k.engine.detail(openSim.order.id)).not.toBeNull(); // still open: not finished
+    // Real orders' events stay undeletable even though simulated ones can go.
+    await expect(k.db.execute(sql`delete from order_events where order_id = ${real.order.id}`)).rejects.toThrow();
+  });
+});

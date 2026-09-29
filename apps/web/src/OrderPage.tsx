@@ -32,7 +32,7 @@ export function OrderPage() {
   const order = useQuery({
     queryKey: ["order", id],
     queryFn: () => api.order(id),
-    refetchInterval: (q) => (q.state.data && TERMINAL.has(q.state.data.state) ? false : 1500),
+    refetchInterval: (q) => (q.state.data && TERMINAL.has(q.state.data.state) ? false : 3000),
   });
   const stations = useQuery({ queryKey: ["stations"], queryFn: api.stations });
   const [live, setLive] = useState<TrackPoint | null>(null);

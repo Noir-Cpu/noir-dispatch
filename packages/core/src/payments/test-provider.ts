@@ -11,6 +11,7 @@ const TOLERANCE_MS = 5 * 60_000;
  */
 export class TestPaymentProvider implements PaymentProvider {
   readonly name = "test";
+  readonly signatureHeader = "x-test-signature";
   constructor(private readonly webhookSecret: string) {}
 
   async createIntent(i: { orderId: string; amountCents: number; currency: string; idempotencyKey: string }): Promise<Intent> {

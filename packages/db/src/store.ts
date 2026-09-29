@@ -60,13 +60,14 @@ const toDriver = (d: typeof t.drivers.$inferSelect): Driver => ({
   lat: d.lat,
   lng: d.lng,
   locationAt: d.locationAt?.getTime() ?? null,
+  isSimulated: d.isSimulated,
 });
 
 export class DrizzleStore implements Store {
   constructor(private readonly db: Db) {}
 
   async upsertCustomer(c: Customer) {
-    await this.db.insert(t.customers).values(c).onConflictDoUpdate({ target: t.customers.id, set: { name: c.name } });
+    await this.db.insert(t.customers).values({ id: c.id, name: c.name, isSimulated: c.isSimulated ?? false }).onConflictDoUpdate({ target: t.customers.id, set: { name: c.name } });
   }
   async getCustomer(id: string) {
     const [r] = await this.db.select().from(t.customers).where(eq(t.customers.id, id));
@@ -89,7 +90,7 @@ export class DrizzleStore implements Store {
   }
 
   async upsertDriver(d: Driver) {
-    const v = { id: d.id, name: d.name, status: d.status, lat: d.lat, lng: d.lng, locationAt: d.locationAt === null ? null : new Date(d.locationAt) };
+    const v = { id: d.id, name: d.name, status: d.status, lat: d.lat, lng: d.lng, locationAt: d.locationAt === null ? null : new Date(d.locationAt), isSimulated: d.isSimulated ?? false };
     await this.db.insert(t.drivers).values(v).onConflictDoUpdate({ target: t.drivers.id, set: v });
   }
   async getDriver(id: string) {
@@ -108,15 +109,15 @@ export class DrizzleStore implements Store {
     return rows(res).length === 1;
   }
 
-  async insertOrder(i: { id: string; idempotencyKey: string; view: OrderView; event: OrderEvent; payment: Payment }) {
+  async insertOrder(i: { id: string; idempotencyKey: string; isSimulated?: boolean; view: OrderView; event: OrderEvent; payment: Payment }) {
     const v = i.view;
     const e = i.event;
     const p = i.payment;
     const res = await this.db.execute(sql`
       with o as (
-        insert into orders (id, customer_id, station_id, idempotency_key, state, version, fuel, litres, total_cents,
+        insert into orders (id, customer_id, station_id, idempotency_key, is_simulated, state, version, fuel, litres, total_cents,
           dropoff_lat, dropoff_lng, dropoff_label, note, driver_id, declined_by, cancel, placed_at, updated_at)
-        values (${i.id}, ${v.customerId}, ${v.stationId}, ${i.idempotencyKey}, ${v.state}, ${v.version}, ${v.fuel}, ${v.litres},
+        values (${i.id}, ${v.customerId}, ${v.stationId}, ${i.idempotencyKey}, ${i.isSimulated ?? false}, ${v.state}, ${v.version}, ${v.fuel}, ${v.litres},
           ${v.totalCents}, ${v.dropoff.lat}, ${v.dropoff.lng}, ${v.dropoff.label}, ${v.note}, null, '[]'::jsonb, null,
           ${iso(v.placedAt)}::timestamptz, ${iso(v.updatedAt)}::timestamptz)
         on conflict (customer_id, idempotency_key) do nothing
@@ -140,14 +141,14 @@ export class DrizzleStore implements Store {
 
   async getOrder(id: string): Promise<OrderRecord | null> {
     const [r] = await this.db.select().from(t.orders).where(eq(t.orders.id, id));
-    return r ? { id: r.id, view: toView(r) } : null;
+    return r ? { id: r.id, view: toView(r), isSimulated: r.isSimulated } : null;
   }
   async listOrders(filter?: { active?: boolean; states?: string[] }) {
     const conds = [];
     if (filter?.active) conds.push(notInArray(t.orders.state, ["completed", "cancelled"]));
     if (filter?.states) conds.push(inArray(t.orders.state, filter.states));
     const r = await this.db.select().from(t.orders).where(and(...conds)).orderBy(asc(t.orders.placedAt), asc(t.orders.id));
-    return r.map((o) => ({ id: o.id, view: toView(o) }));
+    return r.map((o) => ({ id: o.id, view: toView(o), isSimulated: o.isSimulated }));
   }
 
   async appendEvent(orderId: string, expectedVersion: number, event: OrderEvent, next: OrderView) {
@@ -232,6 +233,25 @@ export class DrizzleStore implements Store {
       paymentId ? sql`select count(*)::int as n from payment_charges where payment_id = ${paymentId}` : sql`select count(*)::int as n from payment_charges`,
     );
     return rows<{ n: number }>(res)[0]!.n;
+  }
+  async deleteLocationsBefore(beforeMs: number) {
+    const res = await this.db.execute(sql`delete from driver_locations where recorded_at < ${iso(beforeMs)}::timestamptz returning id`);
+    return rows(res).length;
+  }
+  async deleteSimulatedOrders(beforeMs: number) {
+    // Two statements: the append-only trigger looks the order up to decide whether its events may go,
+    // so the children are deleted first and the orders last. A crash between them is repaired by a re-run.
+    const cutoff = iso(beforeMs);
+    await this.db.execute(sql`
+      with o as (
+        select id from orders where is_simulated and state in ('completed', 'cancelled') and updated_at < ${cutoff}::timestamptz
+      ), l as (delete from driver_locations where order_id in (select id from o)),
+      c as (delete from payment_charges where payment_id in (select id from payments where order_id in (select id from o))),
+      p as (delete from payments where order_id in (select id from o))
+      delete from order_events where order_id in (select id from o)`);
+    const res = await this.db.execute(sql`
+      delete from orders where is_simulated and state in ('completed', 'cancelled') and updated_at < ${cutoff}::timestamptz returning id`);
+    return rows(res).length;
   }
   async recordWebhookEvent(eventId: string, type: string, at: number) {
     const res = await this.db.execute(
