@@ -1,0 +1,13 @@
+body { margin: 0; background: var(--bone); color: var(--ink); font-family: var(--font-body); }
+main { padding: 2rem 16px; max-width: 60rem; margin: 0 auto; }
+h1 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-stretch: 75%;
+  text-transform: uppercase;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+  font-size: clamp(2.5rem, 10vw, 6rem);
+}
+.meta { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--graphite); }
+button { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }

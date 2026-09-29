@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790694584192,
+      "tag": "0000_kind_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790705088545,
+      "tag": "0001_modern_slapstick",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790705089026,
+      "tag": "0002_grey_enchantress",
+      "breakpoints": true
+    }
+  ]
+}

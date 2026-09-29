@@ -1,0 +1,7 @@
+{
+  "case": "000",
+  "codename": "TEMPLATE",
+  "status": "template",
+  "liveUrl": null,
+  "stack": ["cloudflare-workers", "hono", "neon", "drizzle", "react", "vite"]
+}

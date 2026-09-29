@@ -1,0 +1,20 @@
+:root {
+  --ink: oklch(0.17 0.006 60);
+  --bone: oklch(0.94 0.012 85);
+  --graphite: oklch(0.48 0.008 60);
+  --smoke: oklch(0.86 0.01 80);
+  --signal: oklch(0.58 0.2 28);
+
+  --font-display: "Archivo Variable", "Archivo", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-serif: "Instrument Serif", Georgia, serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: oklch(0.94 0.012 85);
+    --bone: oklch(0.17 0.006 60);
+    --graphite: oklch(0.72 0.008 70);
+    --smoke: oklch(0.3 0.008 60);
+  }
+}

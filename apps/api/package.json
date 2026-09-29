@@ -1,0 +1,26 @@
+{
+  "name": "@noir/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@better-auth/passkey": "^1.7.6",
+    "@hono/zod-validator": "^0.9.1",
+    "@noir/db": "*",
+    "@sentry/cloudflare": "^11.1.0",
+    "better-auth": "^1.7.6",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.6.0",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241106.0",
+    "vitest": "^5",
+    "wrangler": "^4.143.0"
+  }
+}
