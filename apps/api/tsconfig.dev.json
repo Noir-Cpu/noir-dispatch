@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"types":["node"],"lib":["ES2022","DOM"]},"include":["src/dev.ts","src/bench.ts","src/app.ts","src/otel.ts","src/**/*.test.ts"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"types":["node"],"lib":["ES2022","DOM"]},"include":["vitest.config.ts","src/dev.ts","src/bench.ts","src/app.ts","src/otel.ts","src/**/*.test.ts"]}
