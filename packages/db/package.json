@@ -2,17 +2,24 @@
   "name": "@noir/db",
   "private": true,
   "type": "module",
-  "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc -p .",
+    "test": "vitest run",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@neondatabase/serverless": "^0.10.0",
+    "@noir/core": "*",
     "drizzle-orm": "^0.45.3"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.11"
+    "drizzle-kit": "^0.31.11",
+    "vitest": "^5"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./pglite": "./src/pglite.ts"
   }
 }

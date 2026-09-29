@@ -1,0 +1,22 @@
+{
+  "name": "@noir/engine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "seed": "tsx src/seed-cli.ts"
+  },
+  "dependencies": {
+    "@noir/core": "*",
+    "@noir/db": "*"
+  },
+  "devDependencies": {
+    "vitest": "^5",
+    "tsx": "^4.19.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./local": "./src/testkit.ts"
+  }
+}

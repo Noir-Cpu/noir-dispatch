@@ -1,4 +1,4 @@
-name = "noir-template-api"
+name = "noir-dispatch-api"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -11,3 +11,16 @@ run_worker_first = ["/api/*"]
 
 [observability]
 enabled = true
+
+# One Durable Object per active delivery. SQLite-backed, which the Workers Free plan allows.
+[[durable_objects.bindings]]
+name = "TRACKING"
+class_name = "TrackingRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TrackingRoom"]
+
+# Dispatch tick. Uses 1 of the 5 cron triggers on the account.
+[triggers]
+crons = ["* * * * *"]

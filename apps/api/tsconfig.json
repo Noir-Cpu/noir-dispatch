@@ -1,1 +1,1 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"types":["@cloudflare/workers-types"]},"include":["src"]}
+{"extends":"../../tsconfig.base.json","compilerOptions":{"types":["@cloudflare/workers-types"]},"include":["src"],"exclude":["src/dev.ts","src/bench.ts","src/**/*.test.ts"]}

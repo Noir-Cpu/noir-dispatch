@@ -4,13 +4,16 @@ export default defineConfig({
   testDir: "e2e",
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: { baseURL: "http://localhost:8787", trace: "on-first-retry" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  // Serves the built web app and the API from one Worker, as in production.
+  projects: [
+    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "phone", use: { ...devices["Pixel 7"] }, testMatch: /.*a11y.*\.spec\.ts/ },
+  ],
+  // Local dev server: in-memory PGlite, the simulator running 20x faster than real time, web app served from dist.
   webServer: {
-    command: "npm run build -w @noir/web && npm run dev -w @noir/api",
+    command: "npm run build -w @noir/web && npm run dev:local -w @noir/api",
     url: "http://localhost:8787/api/health",
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    env: { WRANGLER_SEND_METRICS: "false" },
+    timeout: 180_000,
+    env: { SIM_TIME_SCALE: "20", SIM_DRIVERS: "20", SIM_ORDERS_PER_HOUR: "30" },
   },
 });

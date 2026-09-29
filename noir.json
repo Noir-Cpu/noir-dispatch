@@ -1,7 +1,17 @@
 {
-  "case": "000",
-  "codename": "TEMPLATE",
-  "status": "template",
+  "case": "002",
+  "codename": "DISPATCH",
+  "status": "built-not-deployed",
   "liveUrl": null,
-  "stack": ["cloudflare-workers", "hono", "neon", "drizzle", "react", "vite"]
+  "stack": [
+    "cloudflare-workers",
+    "durable-objects",
+    "hono",
+    "neon",
+    "drizzle",
+    "pglite",
+    "react",
+    "leaflet",
+    "vite"
+  ]
 }

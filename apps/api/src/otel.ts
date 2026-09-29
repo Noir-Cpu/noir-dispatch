@@ -5,7 +5,7 @@ export type OtelEnv = {
   GRAFANA_OTLP_AUTH?: string;
 };
 
-const SERVICE_NAME = "noir-template-api";
+const SERVICE_NAME = "noir-dispatch-api";
 
 const randomHex = (bytes: number) =>
   Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");

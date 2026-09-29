@@ -1,0 +1,12 @@
+{
+  "name": "@noir/core",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": { "zod": "^4" },
+  "devDependencies": { "fast-check": "^4.0.0", "vitest": "^5" }
+}

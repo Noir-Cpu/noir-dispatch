@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Dispatch Driver (simulated)",
+    "slug": "noir-dispatch-driver",
+    "version": "0.0.0",
+    "ios": {
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Your position is shared with the customer while you deliver.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Your position keeps updating while the screen is off during a delivery.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION"]
+    },
+    "plugins": [["expo-location", { "isAndroidBackgroundLocationEnabled": true }]]
+  }
+}

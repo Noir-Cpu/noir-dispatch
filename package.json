@@ -1,14 +1,18 @@
 {
-  "name": "noir-template",
+  "name": "noir-dispatch",
   "private": true,
   "type": "module",
   "workspaces": [
-    "apps/*",
+    "apps/api",
+    "apps/web",
     "packages/*"
   ],
   "scripts": {
+    "dev:local": "npm run build -w @noir/web && npm run dev:local -w @noir/api",
     "dev:api": "npm run dev -w @noir/api",
     "dev:web": "npm run dev -w @noir/web",
+    "sim": "npm run sim -w @noir/sim --",
+    "bench": "npm run bench -w @noir/api --",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
@@ -18,7 +22,8 @@
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "drizzle-orm": "^0.45.3",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0"
   },
   "overrides": {
     "undici": "^7.30.0",
