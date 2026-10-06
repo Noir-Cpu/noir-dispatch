@@ -27,7 +27,7 @@ test("place an order, pay, and watch it progress to delivered with the simulator
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delivered", { timeout: 100_000 });
   const history = page.locator("section[aria-labelledby=history]");
   await expect(history.getByText("Order placed")).toBeVisible();
-  await expect(history.getByText(/Driver drv-\d+ assigned/)).toBeVisible();
+  await expect(history.getByText(/Driver drv-\d+ assigned/).first()).toBeVisible(); // a 3% simulated decline reassigns, so there can be two
   await expect(history.getByText("Driver set off")).toBeVisible();
   await expect(history.getByText("Delivery completed")).toBeVisible();
 });

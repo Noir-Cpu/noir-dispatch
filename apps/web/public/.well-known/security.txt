@@ -1,0 +1,5 @@
+Contact: https://github.com/Noir-Cpu/noir-dispatch/security/advisories/new
+Expires: 2027-10-06T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://noir-dispatch-api.noir-cpu.workers.dev/.well-known/security.txt
+Policy: https://github.com/Noir-Cpu/noir-dispatch#readme

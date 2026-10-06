@@ -27,12 +27,12 @@ const REMAINING_STYLE: L.PolylineOptions = { color: "#0b57d0", weight: 5, opacit
 
 const reducedMotion = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-function icon(p: Pin, heading = 0) {
+// No inline style="" attributes in the markup: the page's Content-Security-Policy forbids them. Heading is applied through the DOM (el.style) instead.
+function icon(p: Pin) {
   const b = markerBox(p.kind);
-  const rot = p.kind === "driver" || p.kind === "driver-idle";
   return L.divIcon({
     className: `pin pin-${p.kind}${p.selected ? " pin-selected" : ""}`,
-    html: `<div class="pin-body"${rot ? ` style="transform:rotate(${heading}deg)"` : ""}>${markerSvg(p.kind, 32)}</div>`,
+    html: `<div class="pin-body">${markerSvg(p.kind, 32)}</div>`,
     iconSize: [b.w, b.h],
     iconAnchor: [b.ax, b.ay],
   });
@@ -69,6 +69,8 @@ export function LiveMap({
   onPick,
   circles = [],
   lines = [],
+  centerRef,
+  describedBy,
 }: {
   pins: Pin[];
   label: string;
@@ -78,6 +80,10 @@ export function LiveMap({
   onPick?: (lat: number, lng: number) => void;
   circles?: MapCircle[];
   lines?: MapLine[];
+  /** Filled with a function that returns the point at the middle of the map, so a button can drop the pin there (the keyboard and no-drag way to choose a point). */
+  centerRef?: { current: (() => LatLng) | null };
+  /** id of text that explains how to use the map with a keyboard. */
+  describedBy?: string;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -93,16 +99,30 @@ export function LiveMap({
   pick.current = onPick;
 
   useEffect(() => {
-    const m = L.map(el.current!, { center: [-33.94, 18.5], zoom: 10, keyboard: true });
+    // Leaflet's own zoom, pan and fade animations are switched off for people who asked for less motion.
+    const calm = reducedMotion();
+    const m = L.map(el.current!, { center: [-33.94, 18.5], zoom: 10, keyboard: true, zoomAnimation: !calm, fadeAnimation: !calm, markerZoomAnimation: !calm, inertia: !calm });
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(m);
     m.on("click", (e: L.LeafletMouseEvent) => pick.current?.(e.latlng.lat, e.latlng.lng));
+    // Keyboard: arrow keys pan and +/- zoom (Leaflet), Enter drops the pin at the cross in the middle.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && pick.current && e.target === m.getContainer()) {
+        e.preventDefault();
+        const c = m.getCenter();
+        pick.current(c.lat, c.lng);
+      }
+    };
+    m.getContainer().addEventListener("keydown", onKey);
+    if (centerRef) centerRef.current = () => ({ lat: m.getCenter().lat, lng: m.getCenter().lng });
     map.current = m;
     const mk = markers.current, an = anims.current, ci = circleLayers.current, li = lineLayers.current, re = remLayers.current, ik = iconKeys.current;
     return () => {
       cancelAnimationFrame(raf.current);
+      m.getContainer().removeEventListener("keydown", onKey);
+      if (centerRef) centerRef.current = null;
       m.remove();
       map.current = null;
       for (const x of [mk, an, ci, li, re, ik]) x.clear();
@@ -274,5 +294,10 @@ export function LiveMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey, fitTo?.length, pins.length > 0]);
 
-  return <div ref={el} className="map" role="region" aria-label={label} />;
+  return (
+    <div className="map-wrap">
+      <div ref={el} className="map" role="region" aria-label={label} aria-describedby={describedBy} />
+      {onPick && <span className="crosshair" aria-hidden="true" />}
+    </div>
+  );
 }

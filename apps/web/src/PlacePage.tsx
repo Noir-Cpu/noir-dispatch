@@ -1,11 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { rangeAdvice, stationRanges } from "@noir/core/delivery";
 import { destinationPoint } from "@noir/core/polyline";
 import { ApiError, api, money, rand, type Fuel } from "./api";
 import { useCustomerId } from "./hooks";
-import { LiveMap, type MapCircle, type Pin } from "./LiveMap";
+import { LiveMap, type LatLng, type MapCircle, type Pin } from "./LazyMap";
 import { MapLegend, MapSummary } from "./MapLegend";
 
 // Approximate points for keyboard-friendly selection; tapping the map sets a custom one. The last is deliberately far from every
@@ -37,10 +37,12 @@ export function PlacePage() {
   const [sample, setSample] = useState(0);
   const [custom, setCustom] = useState<{ lat: number; lng: number } | null>(null);
   const [note, setNote] = useState("");
+  const centerRef = useRef<(() => LatLng) | null>(null);
+  const helpId = useId();
   const key = useRef(rand()); // one idempotency key per form: a double click or retry cannot place two orders
 
   const station = stations.data?.find((s) => s.id === stationId);
-  const dropoff = custom ? { ...custom, label: "Custom point on map" } : SAMPLES[sample]!;
+  const dropoff = custom ? { ...custom, label: `Custom point (${custom.lat.toFixed(4)}, ${custom.lng.toFixed(4)})` } : SAMPLES[sample]!;
   const total = station ? Math.round(station.prices[fuel] * litres) : 0;
 
   // Which stations can reach this pin, nearest first, and what to tell the visitor when the chosen one cannot.
@@ -91,9 +93,69 @@ export function PlacePage() {
           place.mutate();
         }}
       >
+        <section className="stack" aria-labelledby="where">
+          <h2 id="where">Where should it go?</h2>
+          <label className="field">
+            <span>Drop-off</span>
+            <select
+              value={custom ? "custom" : String(sample)}
+              onChange={(e) => {
+                if (e.target.value !== "custom") {
+                  setCustom(null);
+                  setSample(Number(e.target.value));
+                }
+              }}
+            >
+              {custom && <option value="custom">{dropoff.label}</option>}
+              {SAMPLES.map((s, i) => (
+                <option key={s.label} value={i}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <span className="hint">Pick a place from the list, tap the map, or enter coordinates. Franschhoek is outside every station&apos;s {radiusKm} km radius, if you want to see what that looks like.</span>
+          </label>
+
+          <LiveMap pins={pins} circles={circles} label="Map of stations, their delivery radius and your drop-off point" onPick={(lat, lng) => setCustom({ lat, lng })} fitTo={fitTo} fitKey={`${stationId}|${custom ? "c" : sample}|${stations.data?.length ?? 0}`} centerRef={centerRef} describedBy={helpId} />
+          <p id={helpId} className="hint">
+            Tap the map to drop the pin. Without a touch screen: focus the map, move it with the arrow keys (plus and minus zoom) and press Enter to drop the pin on the cross in the middle.
+          </p>
+          <div className="row">
+            <button type="button" onClick={() => centerRef.current && setCustom(centerRef.current())}>
+              Drop pin at the cross
+            </button>
+          </div>
+          <CoordinateEntry onUse={(lat, lng) => setCustom({ lat, lng })} />
+          <MapLegend
+            items={[
+              { kind: "station", label: "Station" },
+              { kind: "dropoff", label: "Your drop-off" },
+              { line: "radius", label: `Delivery radius, ${radiusKm} km in a straight line from the station` },
+            ]}
+          />
+          <MapSummary
+            items={[
+              { role: "Drop-off", text: dropoff.label },
+              { role: "Chosen station", text: advice?.chosen ? `${advice.chosen.station.name}, ${advice.chosen.distanceKm.toFixed(1)} km away, ${advice.chosen.inRange ? "inside" : "outside"} the ${radiusKm} km radius` : "none" },
+              { role: "Stations that can deliver here", text: `${ranges.filter((r) => r.inRange).length} of ${ranges.length}` },
+            ]}
+          />
+          <p className="sr-only" role="status" aria-live="polite">Drop-off: {dropoff.label}</p>
+
+          {(outOfRange || rejected) && (
+            <div className="notice" role="alert" data-testid="range-message">
+              <p>{rejected ?? advice?.message}</p>
+              {suggestion && suggestion.id !== stationId && (
+                <button type="button" onClick={() => setStationId(suggestion.id)}>
+                  Use {suggestion.name}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
         <fieldset>
           <legend>Station</legend>
-          {stations.isPending && <p className="meta">Loading stations…</p>}
+          {stations.isPending && <p className="meta station-skeleton">Loading stations…</p>}
           {ranges.map(({ station: s, distanceKm, inRange }) => (
             <label key={s.id} className={`choice${inRange ? "" : " out"}`}>
               <input type="radio" name="station" value={s.id} checked={s.id === stationId} disabled={!inRange && s.id !== stationId} onChange={() => setStationId(s.id)} />
@@ -124,66 +186,59 @@ export function PlacePage() {
         </div>
 
         <label className="field">
-          <span>Drop-off</span>
-          <select
-            value={custom ? "custom" : String(sample)}
-            onChange={(e) => {
-              if (e.target.value !== "custom") {
-                setCustom(null);
-                setSample(Number(e.target.value));
-              }
-            }}
-          >
-            {custom && <option value="custom">Custom point on map</option>}
-            {SAMPLES.map((s, i) => (
-              <option key={s.label} value={i}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <span className="hint">Or tap the map to drop a pin. Franschhoek is outside every station&apos;s {radiusKm} km radius, if you want to see what that looks like.</span>
-        </label>
-
-        <LiveMap pins={pins} circles={circles} label="Map of stations, their delivery radius and your drop-off point" onPick={(lat, lng) => setCustom({ lat, lng })} fitTo={fitTo} fitKey={`${stationId}|${custom ? "c" : sample}|${stations.data?.length ?? 0}`} />
-        <MapLegend
-          items={[
-            { kind: "station", label: "Station" },
-            { kind: "dropoff", label: "Your drop-off" },
-            { line: "radius", label: `Delivery radius, ${radiusKm} km in a straight line from the station` },
-          ]}
-        />
-        <MapSummary
-          items={[
-            { role: "Drop-off", text: dropoff.label },
-            { role: "Chosen station", text: advice?.chosen ? `${advice.chosen.station.name}, ${advice.chosen.distanceKm.toFixed(1)} km away, ${advice.chosen.inRange ? "inside" : "outside"} the ${radiusKm} km radius` : "none" },
-            { role: "Stations that can deliver here", text: `${ranges.filter((r) => r.inRange).length} of ${ranges.length}` },
-          ]}
-        />
-
-        {(outOfRange || rejected) && (
-          <div className="notice" role="alert" data-testid="range-message">
-            <p>{rejected ?? advice?.message}</p>
-            {suggestion && suggestion.id !== stationId && (
-              <button type="button" onClick={() => setStationId(suggestion.id)}>
-                Use {suggestion.name}
-              </button>
-            )}
-          </div>
-        )}
-
-        <label className="field">
           <span>Note for the driver (optional)</span>
           <input type="text" maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} />
         </label>
 
-        <p className="total" aria-live="polite">
-          Total <strong>{money(total)}</strong> <span className="meta">({litres} L)</span>
-        </p>
         {serverMessage && <p role="alert" className="error">{serverMessage}</p>}
-        <button className="primary" type="submit" disabled={!station || place.isPending || !(litres > 0) || outOfRange}>
-          {place.isPending ? "Placing…" : outOfRange ? "Choose a station in range" : "Place order"}
-        </button>
+        <div className="submit-bar">
+          <p className="total" aria-live="polite">
+            Total <strong>{money(total)}</strong> <span className="meta">({litres} L)</span>
+          </p>
+          <button className="primary" type="submit" disabled={!station || place.isPending || !(litres > 0) || outOfRange}>
+            {place.isPending ? "Placing…" : outOfRange ? "Choose a station in range" : "Place order"}
+          </button>
+        </div>
       </form>
     </div>
+  );
+}
+
+/** Choose a point by typing it: the way to set a pin without dragging, tapping or a map at all. Lives outside the order form so Enter here never places an order. */
+function CoordinateEntry({ onUse }: { onUse: (lat: number, lng: number) => void }) {
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const num = (v: string) => (v.trim() === "" ? NaN : Number(v.trim().replace(",", ".")));
+  const apply = () => {
+    const la = num(lat);
+    const ln = num(lng);
+    if (!Number.isFinite(la) || la < -90 || la > 90) return setError("Latitude must be a number between -90 and 90, for example -33.9721.");
+    if (!Number.isFinite(ln) || ln < -180 || ln > 180) return setError("Longitude must be a number between -180 and 180, for example 18.4592.");
+    setError(null);
+    onUse(la, ln);
+  };
+  const enter = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      apply();
+    }
+  };
+  return (
+    <details className="coords">
+      <summary>Enter coordinates instead</summary>
+      <div className="row">
+        <label className="field">
+          <span>Latitude</span>
+          <input type="text" inputMode="decimal" autoComplete="off" value={lat} onChange={(e) => setLat(e.target.value)} onKeyDown={enter} aria-invalid={!!error && !Number.isFinite(num(lat))} aria-describedby={error ? "coords-error" : undefined} placeholder="-33.9721" />
+        </label>
+        <label className="field">
+          <span>Longitude</span>
+          <input type="text" inputMode="decimal" autoComplete="off" value={lng} onChange={(e) => setLng(e.target.value)} onKeyDown={enter} aria-describedby={error ? "coords-error" : undefined} placeholder="18.4592" />
+        </label>
+        <button type="button" onClick={apply}>Use these coordinates</button>
+      </div>
+      {error && <p id="coords-error" role="alert" className="error">{error}</p>}
+    </details>
   );
 }

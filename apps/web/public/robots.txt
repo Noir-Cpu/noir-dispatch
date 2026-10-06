@@ -1,0 +1,7 @@
+# One public page: the order page at /. Order pages and the ops console are private and carry noindex (meta tag and X-Robots-Tag header).
+# They are deliberately not Disallowed here: a crawler that is not allowed to fetch a page never sees its noindex.
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://noir-dispatch-api.noir-cpu.workers.dev/sitemap.xml

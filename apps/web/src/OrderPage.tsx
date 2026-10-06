@@ -5,7 +5,7 @@ import { distanceToGo } from "@noir/core/motion";
 import { api, money, STATE_LABEL, trackSocket, type OrderDto, type OrderState, type TrackPoint } from "./api";
 import { useDemo } from "./demo";
 import { clock, km } from "./hooks";
-import { LiveMap, type MapLine, type Pin } from "./LiveMap";
+import { LiveMap, type MapLine, type Pin } from "./LazyMap";
 import { MapLegend, MapSummary, type LegendItem } from "./MapLegend";
 
 const STEPS: OrderState[] = ["placed", "accepted", "assigned", "en_route", "arrived", "delivering", "completed"];
@@ -89,6 +89,26 @@ export function OrderPage() {
 
   const fitTo = useMemo(() => [...(station ? [station] : []), ...(o ? [o.dropoff] : []), ...(driverLive ? [driverLive] : [])], [station, o, driverLive]);
 
+  // Polite announcements for screen readers, only when something changes that matters: the state, and the driver coming within 2 km, 1 km and 500 m.
+  // (The "Live: driver ..." line updates every few seconds and is deliberately not a live region.)
+  const [announce, setAnnounce] = useState("");
+  const said = useRef(new Set<number>());
+  useEffect(() => {
+    if (o) setAnnounce(STATE_LABEL[o.state]);
+    said.current.clear();
+  }, [o?.state]);
+  const toGo = driverLive && o ? distanceToGo(route, driverLive, o.dropoff) : null;
+  useEffect(() => {
+    if (toGo === null) return;
+    for (const t of [500, 1000, 2000]) {
+      if (toGo <= t && !said.current.has(t)) {
+        said.current.add(t);
+        setAnnounce(`The driver is within ${km(t)} of your drop-off.`);
+        break;
+      }
+    }
+  }, [toGo]);
+
   if (order.isPending) return <p className="meta">Loading order…</p>;
   if (!o) return <p role="alert" className="error">Order not found.</p>;
 
@@ -107,7 +127,8 @@ export function OrderPage() {
   return (
     <div className="stack">
       <p className="meta">Order {o.id.slice(-8)}</p>
-      <h1 aria-live="polite">{STATE_LABEL[o.state]}</h1>
+      <h1>{STATE_LABEL[o.state]}</h1>
+      <p className="sr-only" role="status" aria-live="polite">{announce}</p>
 
       {o.state === "cancelled" ? (
         <p>

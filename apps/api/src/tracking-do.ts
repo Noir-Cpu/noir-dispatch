@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { DrizzleStore, createNeonDb } from "@noir/db";
 import { TrackRoom, type TrackMessage, type TrackPoint } from "@noir/core";
 import type { Env } from "./app";
+import { MAX_SOCKETS_PER_ROOM } from "./security";
 
 type DoEnv = Env;
 
@@ -54,6 +55,7 @@ export class TrackingRoom extends DurableObject<DoEnv> {
     const path = new URL(request.url).pathname;
     if (path === "/ws") {
       if (request.headers.get("upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+      if (this.ctx.getWebSockets().length >= MAX_SOCKETS_PER_ROOM) return new Response("room full", { status: 429, headers: { "retry-after": "30" } });
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1]);
       const s = this.room.snapshot();
@@ -78,8 +80,14 @@ export class TrackingRoom extends DurableObject<DoEnv> {
     return new Response("not found", { status: 404 });
   }
 
-  // Viewers only listen; ignore anything they send.
-  webSocketMessage() {}
+  // Viewers only listen; ignore anything they send. A client that sends anyway is closed so it cannot hold the room open with traffic.
+  webSocketMessage(ws: WebSocket) {
+    try {
+      ws.close(1008, "viewers do not send");
+    } catch {
+      /* already closed */
+    }
+  }
   webSocketClose(ws: WebSocket, code: number) {
     try {
       ws.close(code === 1005 ? 1000 : code);

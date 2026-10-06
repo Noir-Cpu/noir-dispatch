@@ -88,3 +88,36 @@ tr.selected { background: var(--smoke); }
 .s-cancelled { border-color: var(--signal); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 code { font-family: var(--font-mono); font-size: 0.8rem; }
+
+/* ---- quality pass: focus target, phone layout, map controls, reduced motion ---- */
+main:focus { outline: none; }
+.map-wrap { position: relative; }
+.map-loading { display: flex; align-items: center; justify-content: center; background: var(--smoke); }
+/* The cross marks the middle of the map: the point "Drop pin at the cross" and the Enter key use. Dark lines with a white halo, so it shows on any tile. */
+.crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; z-index: 500;
+  background: linear-gradient(#111, #111) center / 2px 100% no-repeat, linear-gradient(#111, #111) center / 100% 2px no-repeat; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); }
+/* Leaflet's zoom buttons are 30 px by default; a thumb needs 44. */
+/* (more specific than leaflet.css, which loads after this file with the map chunk) */
+.leaflet-container .leaflet-bar a, .leaflet-container.leaflet-touch .leaflet-bar a { width: 44px; height: 44px; line-height: 44px; }
+.leaflet-container.leaflet-touch .leaflet-control-zoom-in, .leaflet-container.leaflet-touch .leaflet-control-zoom-out { font-size: 24px; }
+.leaflet-container a.leaflet-control-attribution-link, .leaflet-control-attribution a { display: inline-block; padding: 0.35rem 0.15rem; }
+/* Swatches in the legend stand for lines drawn on the (always light) map, so they sit on a light chip in both colour schemes. */
+.legend-line { background: #fff; padding: 2px 3px; border-radius: 2px; box-sizing: content-box; }
+.legend-glyph { padding: 0; }
+.station-skeleton { min-height: 22rem; }
+.coords summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-family: var(--font-mono); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.coords .row { align-items: end; }
+.coords input { width: 11rem; max-width: 100%; }
+/* The total and the order button stay in reach at the bottom of a phone screen while the long form scrolls. */
+.submit-bar { position: sticky; bottom: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem;
+  margin: 0 -16px; padding: 0.6rem 16px; background: var(--bone); border-top: 2px solid var(--ink); }
+.submit-bar .total { margin: 0; }
+@media (max-width: 380px) {
+  .submit-bar button { flex: 1 1 100%; }
+  dl { grid-template-columns: 1fr; }
+  th, td { padding: 0.5rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .leaflet-fade-anim .leaflet-tile, .leaflet-zoom-anim .leaflet-zoom-animated, .leaflet-pane, .leaflet-tile { transition: none !important; animation: none !important; }
+  html { scroll-behavior: auto; }
+}

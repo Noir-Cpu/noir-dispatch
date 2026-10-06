@@ -2,10 +2,13 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { createMiddleware } from "hono/factory";
+import { bodyLimit } from "hono/body-limit";
+import { HTTPException } from "hono/http-exception";
 import { ACTORS, DEMO_TIME_COMPRESSION, FUELS, StraightLineRouteProvider, WebhookSignatureError, availableActions, isDemoDriverId, type Actor, type RouteProvider } from "@noir/core";
 import { DEMO_DEFAULT_DAILY_STEP_CAP, DemoRunner, Engine, EngineError, type DemoErrorCode } from "@noir/engine";
 import { tracing, type OtelEnv } from "./otel";
 import { MemoryRateLimiter, isAllowedLogin, orderToken, safeEqual, type RateLimiter } from "./guards";
+import { redact, sameOriginSocket, securityHeaders } from "./security";
 
 export type Env = OtelEnv & {
   DATABASE_URL?: string;
@@ -51,6 +54,17 @@ export type AppServices = {
   /** Dev only: a signed "customer paid" event through the real webhook path. */
   devPay?: (env: Env, orderId: string) => Promise<unknown>;
 };
+
+/** Largest request body the API reads. The biggest legitimate body (an order) is under 1 KB; a payment webhook is a few KB. */
+export const MAX_BODY_BYTES = 16 * 1024;
+
+/** Validation failures name the fields, never echo the values or the schema. */
+const validate = <S extends z.ZodType>(schema: S) =>
+  zValidator("json", schema, (r, c) => {
+    if (r.success) return;
+    const fields = [...new Set(r.error.issues.map((i) => i.path.join(".") || "body"))];
+    return c.json({ error: "invalid_request", message: `Check these fields: ${fields.join(", ")}`, fields }, 400);
+  });
 
 const latLng = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
 const dropoff = latLng.extend({ label: z.string().min(1).max(120) });
@@ -110,6 +124,11 @@ export function createApp(services: AppServices) {
   const demoCapMemo = { day: null as string | null }; // per isolate: once today's cap is hit, stop asking the database
 
   app.use("*", tracing());
+  app.use("*", securityHeaders());
+  app.use(
+    "*",
+    bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: "payload_too_large", message: `Requests are limited to ${MAX_BODY_BYTES / 1024} KB.` }, 413) }),
+  );
 
   app.get("/health", (c) => c.json({ ok: true }));
 
@@ -131,9 +150,12 @@ export function createApp(services: AppServices) {
     return next();
   });
 
+  app.notFound((c) => c.json({ error: "not_found" }, 404));
+
   app.onError((err, c) => {
+    if (err instanceof HTTPException) return err.getResponse();
     if (err instanceof EngineError) return c.json({ error: err.code, message: err.message, ...err.details }, err.code === "unknown_station" ? 404 : 422);
-    console.error(JSON.stringify({ level: "error", msg: String(err) }));
+    console.error(JSON.stringify({ level: "error", msg: redact(String(err)) })); // never the stack or the request: they can carry tokens
     return c.json({ error: "internal" }, 500);
   });
 
@@ -163,18 +185,24 @@ export function createApp(services: AppServices) {
   // ---- public ---------------------------------------------------------------------------------
 
   // What the web app needs to know about this deployment. No database access.
-  app.get("/config", (c) =>
-    c.json({
+  app.get("/config", (c) => {
+    c.header("cache-control", "public, max-age=300");
+    return c.json({
       deliveryRadiusKm: c.var.engine.config.deliveryRadiusKm,
       demo: { available: demoAllowed(c), speed: DEMO_TIME_COMPRESSION },
-    }),
-  );
+    });
+  });
 
-  app.get("/stations", async (c) => c.json({ stations: await c.var.engine.store.listStations() }));
+  // Changes only when the seed runs (a deploy), so browsers may keep it for a minute: fewer database wake-ups and a faster order page.
+  app.get("/stations", async (c) => {
+    const stations = await c.var.engine.store.listStations();
+    c.header("cache-control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json({ stations });
+  });
 
   app.get("/ops/me", (c) => (c.var.ops ? c.json({ login: c.var.ops.login }) : c.json({ error: "ops_sign_in_required" }, 401)));
 
-  app.post("/orders", limited, zValidator("json", placeBody), async (c) => {
+  app.post("/orders", limited, validate(placeBody), async (c) => {
     const key = c.req.header("idempotency-key");
     if (!key || key.length > 128) return c.json({ error: "idempotency_key_required" }, 400);
     const b = c.req.valid("json");
@@ -192,7 +220,7 @@ export function createApp(services: AppServices) {
     return d ? c.json({ order: present(d) }) : c.json({ error: "not_found" }, 404);
   });
 
-  app.post("/orders/:id/events", limited, zValidator("json", eventEnvelope.and(eventBody)), async (c) => {
+  app.post("/orders/:id/events", limited, validate(eventEnvelope.and(eventBody)), async (c) => {
     const { actor, actorId, ...ev } = c.req.valid("json");
     const id = c.req.param("id");
     const e = c.var.engine;
@@ -255,6 +283,14 @@ export function createApp(services: AppServices) {
 
   app.get("/orders/:id/track", async (c) => {
     if (c.req.header("upgrade") !== "websocket" || !services.trackUpgrade) return c.json({ error: "websocket_required" }, 426);
+    // A page on another site must not be able to open this socket from a visitor's browser. No Origin means not a browser page.
+    if (!sameOriginSocket(c.req.header("origin"), new URL(c.req.url).host)) return c.json({ error: "forbidden_origin" }, 403);
+    // Opening sockets costs a database lookup and a Durable Object request: limit it per client, like every other role-declaring route.
+    if (!c.var.sim && !c.var.ops) {
+      const limiter = services.rateLimiter?.(c.env ?? {}) ?? memory;
+      const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+      if (!(await limiter.allow(`${ip}:WS`))) return c.json({ error: "rate_limited" }, 429);
+    }
     // Only real orders get a room, so arbitrary ids cannot spin up Durable Objects.
     if (!(await c.var.engine.store.getOrder(c.req.param("id")))) return c.json({ error: "not_found" }, 404);
     return services.trackUpgrade(c.env, c.req.param("id"), c.req.raw);
@@ -274,7 +310,7 @@ export function createApp(services: AppServices) {
     return next();
   });
 
-  app.post("/drivers/:id/location", limited, driverGate, zValidator("json", latLng.extend({ orderId: z.string().optional() })), async (c) => {
+  app.post("/drivers/:id/location", limited, driverGate, validate(latLng.extend({ orderId: z.string().optional() })), async (c) => {
     const { orderId, ...pos } = c.req.valid("json");
     const driverId = c.req.param("id");
     if (orderId) {
@@ -284,7 +320,7 @@ export function createApp(services: AppServices) {
     await c.var.engine.recordLocation({ driverId, orderId, ...pos });
     return c.body(null, 204);
   });
-  app.post("/drivers/:id/online", limited, driverGate, zValidator("json", latLng), async (c) => {
+  app.post("/drivers/:id/online", limited, driverGate, validate(latLng), async (c) => {
     await c.var.engine.driverOnline(c.req.param("id"), c.req.valid("json"));
     return c.body(null, 204);
   });
@@ -338,7 +374,7 @@ export function createApp(services: AppServices) {
     return next();
   });
 
-  app.post("/sim/drivers", requireSim, zValidator("json", latLng.extend({ id: z.string().regex(/^sim-drv-\d{2,3}$/), name: z.string().max(40) })), async (c) => {
+  app.post("/sim/drivers", requireSim, validate(latLng.extend({ id: z.string().regex(/^sim-drv-\d{2,3}$/), name: z.string().max(40) })), async (c) => {
     const b = c.req.valid("json");
     const e = c.var.engine;
     const existing = await e.store.getDriver(b.id);
@@ -348,7 +384,7 @@ export function createApp(services: AppServices) {
     return c.body(null, 204);
   });
 
-  app.post("/sim/orders", requireSim, zValidator("json", placeBody.omit({ customerName: true })), async (c) => {
+  app.post("/sim/orders", requireSim, validate(placeBody.omit({ customerName: true })), async (c) => {
     const key = c.req.header("idempotency-key");
     if (!key) return c.json({ error: "idempotency_key_required" }, 400);
     const b = c.req.valid("json");

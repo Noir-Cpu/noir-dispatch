@@ -1,28 +1,13 @@
-import * as Sentry from "@sentry/react";
-import posthog from "posthog-js";
-
-const sentryDsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
-const posthogKey = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
-const posthogHost = import.meta.env.VITE_POSTHOG_HOST as string | undefined;
-
+// Telemetry is off unless a Sentry DSN or PostHog key was set at build time (the deploy workflow passes repository variables; none are set today).
+// When it is off, nothing here is downloaded. When it is on, the Content-Security-Policy in public/_headers must also allow the ingest hosts
+// in connect-src, or the browser blocks the reports.
 export function initTelemetry() {
-  if (sentryDsn) {
-    Sentry.init({ dsn: sentryDsn, tracesSampleRate: 0 });
-  }
-  if (posthogKey) {
-    posthog.init(posthogKey, {
-      api_host: posthogHost,
-      // Cookieless by default: nothing is stored in the browser, so no consent banner is needed.
-      persistence: "memory",
-      autocapture: false,
-      disable_session_recording: true,
-      person_profiles: "identified_only",
-      capture_pageview: "history_change",
-    });
-  }
+  if (!import.meta.env.VITE_SENTRY_DSN && !import.meta.env.VITE_POSTHOG_KEY) return;
+  void import("./telemetry-impl").then((m) => m.startTelemetry());
 }
 
 // Named events only. Never put personal data in properties.
 export function track(event: string, properties?: Record<string, string | number | boolean>) {
-  if (posthogKey) posthog.capture(event, properties);
+  if (!import.meta.env.VITE_POSTHOG_KEY) return;
+  void import("./telemetry-impl").then((m) => m.track(event, properties));
 }
