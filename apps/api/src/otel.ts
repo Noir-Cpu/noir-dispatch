@@ -104,7 +104,14 @@ export const tracing = (): MiddlewareHandler<{ Bindings: OtelEnv }> => async (c,
     const endMs = Date.now();
     const status = thrown ? 500 : c.res.status;
     const route = c.req.routePath;
-    if (!thrown) c.res.headers.set("x-request-id", traceId);
+    if (!thrown) {
+      try {
+        c.res.headers.set("x-request-id", traceId);
+      } catch {
+        // Responses returned by fetch() (a Durable Object stub, a proxied request) have read-only headers, and a
+        // 101 WebSocket upgrade cannot be rebuilt. Telemetry must never turn a working response into a 500.
+      }
+    }
 
     console.log(
       JSON.stringify({ level: status >= 500 ? "error" : "info", requestId: traceId, method: c.req.method, route, status, ms: endMs - startMs }),
