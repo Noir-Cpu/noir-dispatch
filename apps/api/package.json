@@ -13,23 +13,23 @@
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@hono/zod-validator": "^0.9.1",
-    "better-auth": "^1.7.6",
     "@noir/core": "*",
     "@noir/db": "*",
     "@noir/engine": "*",
     "@noir/sim": "*",
-    "@sentry/cloudflare": "^11.1.0",
+    "@sentry/cloudflare": "^11.4.0",
+    "better-auth": "^1.7.7",
     "drizzle-orm": "^0.45.3",
-    "hono": "^4.6.0",
-    "ws": "^8.18.0",
+    "hono": "^4.13.12",
+    "ws": "^8.22.0",
     "zod": "^4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241106.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^22.20.5",
     "@types/ws": "^8.5.0",
     "tsx": "^4.19.0",
-    "vitest": "^5",
-    "wrangler": "^4.143.0"
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
   }
 }
