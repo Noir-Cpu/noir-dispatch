@@ -1,23 +1,36 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, money, rand, type Fuel } from "./api";
+import { rangeAdvice, stationRanges } from "@noir/core/delivery";
+import { destinationPoint } from "@noir/core/polyline";
+import { ApiError, api, money, rand, type Fuel } from "./api";
 import { useCustomerId } from "./hooks";
-import { LiveMap, type Pin } from "./LiveMap";
+import { LiveMap, type MapCircle, type Pin } from "./LiveMap";
+import { MapLegend, MapSummary } from "./MapLegend";
 
-// Approximate points around Cape Town for keyboard-friendly selection; the map click sets a custom one.
+// Approximate points for keyboard-friendly selection; tapping the map sets a custom one. The last is deliberately far from every
+// station, so a visitor can see what happens outside the delivery radius.
 const SAMPLES = [
   { label: "Newlands, Main Road", lat: -33.972, lng: 18.459 },
   { label: "Woodstock, Albert Road", lat: -33.9273, lng: 18.453 },
   { label: "Camps Bay, Victoria Road", lat: -33.9505, lng: 18.3778 },
   { label: "Table View, Marine Drive", lat: -33.824, lng: 18.489 },
   { label: "Constantia, Spaanschemat River Road", lat: -34.024, lng: 18.423 },
+  { label: "Muizenberg, Main Road", lat: -34.105, lng: 18.469 },
+  { label: "Mitchells Plain, Lentegeur Road", lat: -34.039, lng: 18.615 },
+  { label: "Durbanville, Wellington Road", lat: -33.833, lng: 18.647 },
+  { label: "Stellenbosch, Dorp Street", lat: -33.9355, lng: 18.858 },
+  { label: "Somerset West, Main Road", lat: -34.082, lng: 18.85 },
+  { label: "Paarl, Main Road", lat: -33.732, lng: 18.961 },
+  { label: "Franschhoek, Huguenot Road", lat: -33.9136, lng: 19.121 },
 ];
 
 export function PlacePage() {
   const nav = useNavigate();
   const customerId = useCustomerId();
   const stations = useQuery({ queryKey: ["stations"], queryFn: api.stations });
+  const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: Infinity });
+  const radiusKm = config.data?.deliveryRadiusKm ?? 12;
   const [stationId, setStationId] = useState("st-claremont");
   const [fuel, setFuel] = useState<Fuel>("diesel");
   const [litres, setLitres] = useState(40);
@@ -30,10 +43,20 @@ export function PlacePage() {
   const dropoff = custom ? { ...custom, label: "Custom point on map" } : SAMPLES[sample]!;
   const total = station ? Math.round(station.prices[fuel] * litres) : 0;
 
+  // Which stations can reach this pin, nearest first, and what to tell the visitor when the chosen one cannot.
+  const ranges = useMemo(() => stationRanges(stations.data ?? [], dropoff, radiusKm), [stations.data, dropoff.lat, dropoff.lng, radiusKm]);
+  const advice = useMemo(() => (stations.data ? rangeAdvice(stations.data, stationId, dropoff, radiusKm) : null), [stations.data, stationId, dropoff.lat, dropoff.lng, radiusKm]);
+  const outOfRange = !!advice && !advice.ok && !!advice.chosen;
+  const suggestion = advice?.nearestInRange?.station;
+
   const place = useMutation({
     mutationFn: () =>
       api.place({ customerId, customerName: "Web customer", stationId, fuel, litres, dropoff, note: note || undefined }, key.current),
     onSuccess: (o) => nav(`/order/${o.id}`),
+    // A different pin or station is a different order: it needs its own idempotency key.
+    onError: (e) => {
+      if ((e as ApiError).code === "out_of_radius") key.current = rand();
+    },
   });
 
   const pins = useMemo<Pin[]>(
@@ -43,6 +66,19 @@ export function PlacePage() {
     ],
     [stations.data, stationId, dropoff.lat, dropoff.lng, dropoff.label],
   );
+  const circles = useMemo<MapCircle[]>(
+    () => (stations.data ?? []).map((s) => ({ id: s.id, lat: s.lat, lng: s.lng, radiusKm, emphasis: s.id === stationId })),
+    [stations.data, stationId, radiusKm],
+  );
+  // Fit the chosen station's whole circle and the pin; refit when the chosen station changes, not on every pin move.
+  const fitTo = useMemo(
+    () => (station ? [dropoff, ...[0, 90, 180, 270].map((b) => destinationPoint(station, b, radiusKm * 1000))] : [dropoff]),
+    [station, dropoff.lat, dropoff.lng, radiusKm],
+  );
+
+  const serverMessage = place.error && !(place.error as ApiError).code?.startsWith("out_of_radius") ? (place.error as Error).message : null;
+  // The server says the same thing as the form in the same words; show it if the form's own check was bypassed or the radius changed.
+  const rejected = place.error && (place.error as ApiError).code === "out_of_radius" ? (place.error as Error).message : null;
 
   return (
     <div className="stack">
@@ -58,12 +94,16 @@ export function PlacePage() {
         <fieldset>
           <legend>Station</legend>
           {stations.isPending && <p className="meta">Loading stations…</p>}
-          {stations.data?.map((s) => (
-            <label key={s.id} className="choice">
-              <input type="radio" name="station" value={s.id} checked={s.id === stationId} onChange={() => setStationId(s.id)} />
+          {ranges.map(({ station: s, distanceKm, inRange }) => (
+            <label key={s.id} className={`choice${inRange ? "" : " out"}`}>
+              <input type="radio" name="station" value={s.id} checked={s.id === stationId} disabled={!inRange && s.id !== stationId} onChange={() => setStationId(s.id)} />
               <span>
                 <strong>{s.name}</strong>
-                <span className="meta"> rating {s.rating.toFixed(1)} · {money(s.prices[fuel])}/L {fuel === "diesel" ? "diesel" : "petrol 95"}</span>
+                <span className="meta">
+                  {" "}
+                  {inRange ? `${distanceKm.toFixed(1)} km from your pin` : `out of range: ${distanceKm.toFixed(1)} km from your pin, limit ${radiusKm} km`} · rating {s.rating.toFixed(1)} ·{" "}
+                  {money(s.prices[fuel])}/L {fuel === "diesel" ? "diesel" : "petrol 95"}
+                </span>
               </span>
             </label>
           ))}
@@ -101,10 +141,35 @@ export function PlacePage() {
               </option>
             ))}
           </select>
-          <span className="hint">Or tap the map to drop a pin.</span>
+          <span className="hint">Or tap the map to drop a pin. Franschhoek is outside every station&apos;s {radiusKm} km radius, if you want to see what that looks like.</span>
         </label>
 
-        <LiveMap pins={pins} label="Map of stations and your drop-off point" onPick={(lat, lng) => setCustom({ lat, lng })} />
+        <LiveMap pins={pins} circles={circles} label="Map of stations, their delivery radius and your drop-off point" onPick={(lat, lng) => setCustom({ lat, lng })} fitTo={fitTo} fitKey={`${stationId}|${custom ? "c" : sample}|${stations.data?.length ?? 0}`} />
+        <MapLegend
+          items={[
+            { kind: "station", label: "Station" },
+            { kind: "dropoff", label: "Your drop-off" },
+            { line: "radius", label: `Delivery radius, ${radiusKm} km in a straight line from the station` },
+          ]}
+        />
+        <MapSummary
+          items={[
+            { role: "Drop-off", text: dropoff.label },
+            { role: "Chosen station", text: advice?.chosen ? `${advice.chosen.station.name}, ${advice.chosen.distanceKm.toFixed(1)} km away, ${advice.chosen.inRange ? "inside" : "outside"} the ${radiusKm} km radius` : "none" },
+            { role: "Stations that can deliver here", text: `${ranges.filter((r) => r.inRange).length} of ${ranges.length}` },
+          ]}
+        />
+
+        {(outOfRange || rejected) && (
+          <div className="notice" role="alert" data-testid="range-message">
+            <p>{rejected ?? advice?.message}</p>
+            {suggestion && suggestion.id !== stationId && (
+              <button type="button" onClick={() => setStationId(suggestion.id)}>
+                Use {suggestion.name}
+              </button>
+            )}
+          </div>
+        )}
 
         <label className="field">
           <span>Note for the driver (optional)</span>
@@ -114,9 +179,9 @@ export function PlacePage() {
         <p className="total" aria-live="polite">
           Total <strong>{money(total)}</strong> <span className="meta">({litres} L)</span>
         </p>
-        {place.error && <p role="alert" className="error">{(place.error as Error).message}</p>}
-        <button className="primary" type="submit" disabled={!station || place.isPending || !(litres > 0)}>
-          {place.isPending ? "Placing…" : "Place order"}
+        {serverMessage && <p role="alert" className="error">{serverMessage}</p>}
+        <button className="primary" type="submit" disabled={!station || place.isPending || !(litres > 0) || outOfRange}>
+          {place.isPending ? "Placing…" : outOfRange ? "Choose a station in range" : "Place order"}
         </button>
       </form>
     </div>

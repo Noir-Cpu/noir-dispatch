@@ -43,12 +43,22 @@ button.danger { border-color: var(--signal); color: var(--ink); box-shadow: inse
 
 .map { height: 320px; border: 2px solid var(--ink); z-index: 0; }
 @media (min-width: 720px) { .map { height: 420px; } }
-.pin span { display: block; width: 100%; height: 100%; border: 2px solid var(--ink); }
-.pin-station span { background: var(--bone); border-radius: 0; }
-.pin-dropoff span { background: var(--signal); border-radius: 50%; }
-.pin-driver span { background: var(--bone); border-radius: 50%; }
-.pin-driver-busy span { background: var(--ink); border-radius: 50%; }
-.pin-selected span { outline: 3px solid var(--signal); outline-offset: 2px; }
+/* Map markers: shape and glyph carry the meaning, colour only helps. Fixed colours so they read on light map tiles in dark mode too. */
+.pin { background: none; border: 0; }
+.pin-body { width: 100%; height: 100%; display: block; line-height: 0; transform-origin: 50% 50%; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45)); }
+.pin-driver-idle .pin-body { opacity: 0.85; }
+.pin-selected .pin-body { outline: 3px solid #0b57d0; outline-offset: 3px; border-radius: 2px; }
+.pin-driver.pin-selected .pin-body, .pin-driver-idle.pin-selected .pin-body { border-radius: 50%; }
+.legend, .map-summary { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem 1.25rem; }
+.legend li { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.9rem; }
+.legend-glyph { display: inline-flex; line-height: 0; }
+.legend-line { flex: none; }
+.map-summary { flex-direction: column; gap: 0.15rem; font-size: 0.95rem; }
+.notice { border: 2px solid var(--ink); border-left-width: 8px; border-left-color: var(--signal); padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.notice p { margin: 0; }
+.choice.out { color: var(--graphite); }
+.meter { display: flex; flex-direction: column; gap: 0.25rem; }
+progress { width: 100%; height: 0.9rem; accent-color: var(--ink); }
 
 .panel { border: 1px solid var(--graphite); padding: 1rem; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalEngine, type LocalEngine } from "@noir/engine/local";
+import { CAPE_TOWN_STATIONS } from "@noir/engine";
 import { createApp, type Env } from "./app";
 import { MemoryRateLimiter, isAllowedLogin, parseAllowList } from "./guards";
 import { normaliseAuth } from "./otel";
@@ -57,7 +58,7 @@ describe("orders API", () => {
     const again = await post("/api/orders", order, { "idempotency-key": "abc" });
     expect(again.status).toBe(200);
     expect(((await again.json()) as any).order.id).toBe(o.id);
-    expect(((await (await req("/api/stations")).json()) as any).stations).toHaveLength(5);
+    expect(((await (await req("/api/stations")).json()) as any).stations).toHaveLength(CAPE_TOWN_STATIONS.length);
   });
 
   it("requires an idempotency key and validates the body", async () => {

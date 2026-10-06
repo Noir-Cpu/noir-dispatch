@@ -50,17 +50,20 @@ Each is an ADR in `docs/adr/`.
 8. **Roles and ops auth (ADR 0010).** Anonymous customers (order token) and drivers; ops console behind GitHub sign-in with an allow-list (default `Noir-Cpu`); every role-declaring request is rate limited.
 9. **HTTP-mode simulator with a request budget (ADR 0011).** Keeps the deployed demo alive without touching real records or the free quota.
 10. **Paystack test-mode adapter, fake provider by default (ADR 0012); retention in the Worker cron (ADR 0013).**
+11. **Delivery radius and stations (ADR 0014).** 12 km straight-line from the chosen station, enforced by the engine, 15 fictional stations.
+12. **Route provider (ADR 0015).** Road polylines from OSRM's public demo server, one lookup per order, straight-line fallback.
+13. **On-demand demo (ADR 0016).** "Run demo" steps driven by the visitor's open tab at 10x speed, capped per day to bound Neon compute.
 
 ## 7. Flows
 
-**Customer:** pick station and fuel, enter drop-off, place order, pay (test), watch driver approach on the map, cancel while allowed.
+**Customer:** pick a drop-off, see which stations can reach it (12 km), place order, pay (test), press Run demo, watch the driver follow the road on the map (legend and text version beneath), cancel while allowed.
 **Station:** accept the order (in the simulator a bot does this).
 **Driver:** receives assignment, departs, arrives, starts delivery, completes; may decline before arriving, which reassigns.
 **Operator:** map of active orders and drivers, order table, event log per order.
 
 ## 8. Data model
 
-Better Auth tables (`user`, `session`, `account`, `verification`), `is_simulated` flags on customers, drivers and orders, `customers`, `stations` (location, prices, rating), `drivers` (status, last position), `orders` (projection: state, version, driver), `order_events` (append-only, unique per order and sequence), `driver_locations` (downsampled, 7-day retention), `payments` (intent, status, refund), `payment_webhook_events` (dedupe by provider event id).
+Better Auth tables (`user`, `session`, `account`, `verification`), `is_simulated` flags on customers, drivers and orders, `customers`, `stations` (location, prices, rating), `order_demos` (demo clock, cached route), `demo_usage` (steps per day), `drivers` (status, last position), `orders` (projection: state, version, driver), `order_events` (append-only, unique per order and sequence), `driver_locations` (downsampled, 7-day retention), `payments` (intent, status, refund), `payment_webhook_events` (dedupe by provider event id).
 
 ## 9. Capacity estimate
 

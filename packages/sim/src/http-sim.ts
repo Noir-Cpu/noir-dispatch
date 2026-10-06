@@ -3,10 +3,14 @@
 //  - every call is authenticated with SIM_TOKEN, and the server only lets that token touch simulated records
 //    (plus one exception: it may accept new orders as stand-in station staff);
 //  - it spends a hard request budget and never exceeds a request rate;
-//  - it is seeded, and ends each burst by asking the server to expire old simulated orders.
+//  - it is seeded, and ends each burst by asking the server to expire old simulated orders;
+//  - drop-offs are placed within maxDropoffKm of their station, well inside the delivery radius (a server that still refuses
+//    one with 422 out_of_radius is tolerated, not retried in a loop);
+//  - movement is a straight line from where the driver is to the drop-off. It never asks a routing service for a road route:
+//    a burst makes hundreds of moves, and the public OSRM demo server is for one lookup per visitor order (see ADR 0015).
 // Stateless between bursts: it reads what it needs from GET /api/sim/state each tick.
-import { haversineMeters, stepToward, type LatLng } from "@noir/core";
-import { CAPE_TOWN_STATIONS } from "@noir/engine";
+import { DELIVERY_RADIUS_KM, haversineMeters, stepToward, type LatLng } from "@noir/core";
+import { SIM_STATIONS } from "@noir/engine";
 import { rng, type Rng } from "./rng";
 
 export type HttpSimConfig = {
@@ -66,6 +70,7 @@ export async function runBurst(partial: Partial<HttpSimConfig> & Pick<HttpSimCon
   for (const k of ["drivers", "minActive", "durationMs", "tickMs", "maxRequests", "maxRps", "speedKmh", "maxDropoffKm"] as const) {
     if (!Number.isFinite(cfg[k]) || cfg[k] < 0) throw new Error(`invalid simulator setting ${k}: ${String(cfg[k])}`);
   }
+  if (cfg.maxDropoffKm >= DELIVERY_RADIUS_KM) throw new Error(`invalid simulator setting maxDropoffKm: ${cfg.maxDropoffKm} is not inside the ${DELIVERY_RADIUS_KM} km delivery radius`);
   const f = cfg.fetch ?? fetch;
   const sleep = cfg.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = cfg.now ?? Date.now;
@@ -105,7 +110,7 @@ export async function runBurst(partial: Partial<HttpSimConfig> & Pick<HttpSimCon
   try {
     // 1. Make sure the simulated fleet exists and is online (idempotent on the server).
     for (let i = 1; i <= cfg.drivers; i++) {
-      const st = CAPE_TOWN_STATIONS[(i - 1) % CAPE_TOWN_STATIONS.length]!;
+      const st = SIM_STATIONS[(i - 1) % SIM_STATIONS.length]!;
       const start = { lat: st.lat + r.range(-0.01, 0.01), lng: st.lng + r.range(-0.01, 0.01) };
       await call("POST", "/sim/drivers", { id: driverId(i), name: `Sim driver ${i}`, ...start });
     }
@@ -119,26 +124,34 @@ export async function runBurst(partial: Partial<HttpSimConfig> & Pick<HttpSimCon
       // 2. Keep the demo alive: top up simulated orders.
       const activeSim = state.orders.filter((o) => o.isSimulated).length;
       for (let n = activeSim; n < cfg.minActive; n++) {
-        const st = r.pick(CAPE_TOWN_STATIONS);
+        const st = r.pick(SIM_STATIONS);
         const ang = r.range(0, 2 * Math.PI);
         const km = cfg.maxDropoffKm * Math.sqrt(r.next());
-        await call(
-          "POST",
-          "/sim/orders",
-          {
-            customerId: `sim-cust-${r.int(1, 21)}`,
-            stationId: st.id,
-            fuel: r.next() < 0.6 ? "diesel" : "petrol_95",
-            litres: r.int(20, 81),
-            dropoff: {
-              lat: round6(st.lat + (km / 111.32) * Math.sin(ang)),
-              lng: round6(st.lng + (km / (111.32 * Math.cos((st.lat * Math.PI) / 180))) * Math.cos(ang)),
-              label: `Simulated address ${r.int(1, 999)}`,
+        try {
+          await call(
+            "POST",
+            "/sim/orders",
+            {
+              customerId: `sim-cust-${r.int(1, 21)}`,
+              stationId: st.id,
+              fuel: r.next() < 0.6 ? "diesel" : "petrol_95",
+              litres: r.int(20, 81),
+              dropoff: {
+                lat: round6(st.lat + (km / 111.32) * Math.sin(ang)),
+                lng: round6(st.lng + (km / (111.32 * Math.cos((st.lat * Math.PI) / 180))) * Math.cos(ang)),
+                label: `Simulated address ${r.int(1, 999)}`,
+              },
             },
-          },
-          { "idempotency-key": `http-sim-${cfg.seed}-${ordersPlaced}` },
-        );
-        ordersPlaced++;
+            { "idempotency-key": `http-sim-${cfg.seed}-${ordersPlaced}` },
+          );
+          ordersPlaced++;
+        } catch (e) {
+          if (e instanceof HttpError && e.status === 422) {
+            transitions.refused_out_of_radius = (transitions.refused_out_of_radius ?? 0) + 1;
+            break; // the server's radius is smaller than this simulator's: try again next tick, not in a loop
+          }
+          throw e;
+        }
       }
 
       // 3. Advance every order that needs a nudge.

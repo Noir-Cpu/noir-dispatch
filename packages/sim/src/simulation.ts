@@ -5,7 +5,7 @@ import {
   type OrderRecord,
   type TrackHub,
 } from "@noir/core";
-import { CAPE_TOWN_BOX, CAPE_TOWN_STATIONS, type Engine } from "@noir/engine";
+import { CAPE_TOWN_BOX, SIM_STATIONS, type Engine } from "@noir/engine";
 import { percentile, rng, type Rng } from "./rng";
 
 export type SimConfig = {
@@ -75,7 +75,7 @@ export class Simulation {
   private sentAt = 0;
   /** `${orderId}:${t}` -> performance.now() when the ping entered the engine. For latency across a real socket. */
   readonly sends = new Map<string, number>();
-  private stationById = new Map(CAPE_TOWN_STATIONS.map((s) => [s.id, s]));
+  private stationById = new Map(SIM_STATIONS.map((s) => [s.id, s]));
 
   constructor(
     private readonly o: {
@@ -133,7 +133,7 @@ export class Simulation {
     const { engine } = this.o;
     const n = this.r.poisson((this.cfg.ordersPerHour / 3600) * this.cfg.tickSeconds);
     for (let i = 0; i < n; i++) {
-      const st = this.r.pick(CAPE_TOWN_STATIONS);
+      const st = this.r.pick(SIM_STATIONS);
       const ang = this.r.range(0, 2 * Math.PI);
       const km = this.cfg.maxDropoffKm * Math.sqrt(this.r.next());
       const dropoff = {

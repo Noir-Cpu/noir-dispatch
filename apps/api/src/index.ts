@@ -1,10 +1,11 @@
 import * as Sentry from "@sentry/cloudflare";
-import { HaversineEta, PaystackProvider, TestPaymentProvider, type PaymentProvider } from "@noir/core";
+import { FallbackRouteProvider, HaversineEta, OsrmRouteProvider, PaystackProvider, StraightLineRouteProvider, TestPaymentProvider, type PaymentProvider } from "@noir/core";
 import { DrizzleStore, createNeonDb } from "@noir/db";
 import { Engine, payAsProvider } from "@noir/engine";
 import { createApp, type AppServices, type Env } from "./app";
 import { createAuth, opsSession, type AuthEnv } from "./auth";
 import { DoHub } from "./do-hub";
+import { parseRadiusKm } from "./config";
 import { cloudflareLimiter } from "./guards";
 
 export { TrackingRoom } from "./tracking-do";
@@ -23,6 +24,7 @@ function buildEngine(env: Env): Engine | null {
     store: new DrizzleStore(createNeonDb(env.DATABASE_URL)),
     payments,
     eta: new HaversineEta(),
+    config: { deliveryRadiusKm: parseRadiusKm(env.DELIVERY_RADIUS_KM) },
     hub: env.TRACKING ? new DoHub(env.TRACKING as DurableObjectNamespace) : undefined,
   });
 }
@@ -33,6 +35,13 @@ const services: AppServices = {
     if (!env.TRACKING) return new Response("tracking not configured", { status: 503 });
     return new DoHub(env.TRACKING as DurableObjectNamespace).upgrade(orderId, req);
   },
+  // Public OSRM demo server: no guarantee, light use only. One lookup per order (DemoRunner), 3 s timeout, straight-line fallback.
+  routes: () =>
+    new FallbackRouteProvider(
+      new OsrmRouteProvider({ userAgent: "noir-dispatch-demo/1.0 (+https://github.com/Noir-Cpu/noir-dispatch)", timeoutMs: 3000 }),
+      new StraightLineRouteProvider(),
+      (reason) => console.warn(JSON.stringify({ level: "warn", msg: "route lookup failed, using straight line", reason })),
+    ),
   opsSession: (env, req) => opsSession(env as AuthEnv, req),
   authHandler: (env, req) => createAuth(env as AuthEnv, req.url).handler(req),
   rateLimiter: (env) => (env.RATE_LIMIT ? cloudflareLimiter(env.RATE_LIMIT as Parameters<typeof cloudflareLimiter>[0]) : undefined),

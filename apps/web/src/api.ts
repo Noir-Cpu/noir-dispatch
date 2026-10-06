@@ -28,17 +28,29 @@ export type TrackMessage =
   | { type: "snapshot"; last: TrackPoint | null; status: string | null; track: TrackPoint[] }
   | { type: "position"; point: TrackPoint }
   | { type: "status"; status: string };
+export type AppConfig = { deliveryRadiusKm: number; demo: { available: boolean; speed: number } };
+export type RouteDto = { route: { points: [number, number][]; source: "osrm" | "straight"; distanceM: number; durationS: number } | null; demo: { startedAt: number; speed: number } | null };
+export type DemoStep = {
+  state: OrderState;
+  done: boolean;
+  preparing: boolean;
+  speed: number;
+  progress: number;
+  etaRealS: number | null;
+  routeSource: "osrm" | "straight" | null;
+  driverId: string | null;
+};
 export type TrackPoint = { orderId: string; driverId: string; lat: number; lng: number; t: number };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((body as { message?: string; error?: string }).message ?? (body as { error?: string }).error ?? `HTTP ${res.status}`, res.status);
+  if (!res.ok) throw new ApiError((body as { message?: string; error?: string }).message ?? (body as { error?: string }).error ?? `HTTP ${res.status}`, res.status, (body as { error?: string }).error);
   return body as T;
 }
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status = 0) {
+  constructor(message: string, readonly status = 0, /** Machine-readable code from the server, e.g. "out_of_radius", "daily_cap". */ readonly code?: string) {
     super(message);
   }
 }
@@ -77,6 +89,9 @@ export const api = {
   event: (id: string, body: unknown) =>
     call<{ order: OrderDto }>(`/orders/${id}/events`, { method: "POST", body: JSON.stringify(body), headers: tokenHeader(id) }).then((r) => r.order),
   pay: (id: string) => call<unknown>(`/dev/pay/${id}`, { method: "POST", headers: tokenHeader(id) }),
+  config: () => call<AppConfig>("/config"),
+  route: (id: string) => call<RouteDto>(`/orders/${id}/route`),
+  demoStep: (id: string, signal?: AbortSignal) => call<DemoStep>(`/orders/${id}/demo/step`, { method: "POST", headers: tokenHeader(id), signal }),
   me: () => call<{ login: string }>("/ops/me"),
 };
 

@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { createMiddleware } from "hono/factory";
-import { ACTORS, FUELS, WebhookSignatureError, availableActions, type Actor } from "@noir/core";
-import { Engine, EngineError } from "@noir/engine";
+import { ACTORS, DEMO_TIME_COMPRESSION, FUELS, StraightLineRouteProvider, WebhookSignatureError, availableActions, isDemoDriverId, type Actor, type RouteProvider } from "@noir/core";
+import { DEMO_DEFAULT_DAILY_STEP_CAP, DemoRunner, Engine, EngineError, type DemoErrorCode } from "@noir/engine";
 import { tracing, type OtelEnv } from "./otel";
 import { MemoryRateLimiter, isAllowedLogin, orderToken, safeEqual, type RateLimiter } from "./guards";
 
@@ -25,6 +25,10 @@ export type Env = OtelEnv & {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   SENTRY_DSN_API?: string;
+  /** Plain wrangler var: straight-line km from the chosen station within which orders are accepted. Default 12. */
+  DELIVERY_RADIUS_KM?: string;
+  /** Plain wrangler var: global cap on demo steps per UTC day (bounds Neon compute). Default 400. */
+  DEMO_DAILY_STEP_CAP?: string;
   // Durable Object namespace and rate-limit binding; typed loosely so app.ts stays runtime-agnostic.
   TRACKING?: unknown;
   RATE_LIMIT?: unknown;
@@ -40,6 +44,10 @@ export type AppServices = {
   /** Auth handler mounted at /api/auth/* (Better Auth). */
   authHandler?: (env: Env, req: Request) => Promise<Response>;
   rateLimiter?: (env: Env) => RateLimiter | undefined;
+  /** Routing for the on-demand demo (one lookup per order). Omitted means straight lines, with no network call. */
+  routes?: (env: Env) => RouteProvider;
+  /** Wall clock for the demo; omit to use the engine's clock (Date.now on the Worker). The dev server's engine clock is simulated. */
+  demoClock?: () => number;
   /** Dev only: a signed "customer paid" event through the real webhook path. */
   devPay?: (env: Env, orderId: string) => Promise<unknown>;
 };
@@ -71,6 +79,16 @@ const eventBody = z.discriminatedUnion("type", [
 ]);
 const eventEnvelope = z.object({ actor: z.enum(ACTORS).exclude(["system"]), actorId: z.string().max(64).optional() });
 
+const DEMO_STATUS: Record<DemoErrorCode, 403 | 404 | 409 | 429 | 503> = {
+  not_found: 404,
+  not_demoable: 403,
+  payment_required: 409,
+  other_driver: 409,
+  no_driver: 503,
+  step_limit: 429,
+  daily_cap: 429,
+};
+
 const STATUS: Record<string, 400 | 403 | 404 | 409 | 422> = {
   no_order: 404,
   not_found: 404,
@@ -88,6 +106,8 @@ type Vars = { engine: Engine; sim: boolean; ops: { login: string } | null };
 export function createApp(services: AppServices) {
   const app = new Hono<{ Bindings: Env; Variables: Vars }>().basePath("/api");
   const memory = new MemoryRateLimiter(60, 60_000);
+  const demoMemory = new MemoryRateLimiter(60, 60_000);
+  const demoCapMemo = { day: null as string | null }; // per isolate: once today's cap is hit, stop asking the database
 
   app.use("*", tracing());
 
@@ -112,7 +132,7 @@ export function createApp(services: AppServices) {
   });
 
   app.onError((err, c) => {
-    if (err instanceof EngineError) return c.json({ error: err.code, message: err.message }, err.code === "unknown_station" ? 404 : 422);
+    if (err instanceof EngineError) return c.json({ error: err.code, message: err.message, ...err.details }, err.code === "unknown_station" ? 404 : 422);
     console.error(JSON.stringify({ level: "error", msg: String(err) }));
     return c.json({ error: "internal" }, 500);
   });
@@ -132,12 +152,23 @@ export function createApp(services: AppServices) {
     return next();
   });
 
+  // The on-demand demo exists only with DEV_TOOLS=1 and the fake payment provider, whatever else is configured.
+  const demoAllowed = (c: { env: Env | undefined; var: Vars }) => c.env?.DEV_TOOLS === "1" && c.var.engine.paymentProvider === "test";
+
   const tokenOk = async (c: { env: Env | undefined }, orderId: string, given: string | undefined) => {
     const secret = c.env?.ORDER_TOKEN_SECRET;
     return !!secret && safeEqual(given, await orderToken(secret, orderId));
   };
 
   // ---- public ---------------------------------------------------------------------------------
+
+  // What the web app needs to know about this deployment. No database access.
+  app.get("/config", (c) =>
+    c.json({
+      deliveryRadiusKm: c.var.engine.config.deliveryRadiusKm,
+      demo: { available: demoAllowed(c), speed: DEMO_TIME_COMPRESSION },
+    }),
+  );
 
   app.get("/stations", async (c) => c.json({ stations: await c.var.engine.store.listStations() }));
 
@@ -189,6 +220,37 @@ export function createApp(services: AppServices) {
     const r = await e.submit(id, { ...ev, actor, actorId });
     if (!r.ok) return c.json({ error: r.error.code, message: r.error.message }, STATUS[r.error.code] ?? 400);
     return c.json({ order: present((await e.detail(id))!) });
+  });
+
+  // The road route cached for an order that has run the demo (null for everything else): a read capability like the order itself.
+  app.get("/orders/:id/route", async (c) => {
+    const demo = await c.var.engine.store.getDemo(c.req.param("id"));
+    return c.json({
+      route: demo?.route ? { points: demo.route.points.map((p) => [p.lat, p.lng]), source: demo.route.source, distanceM: demo.route.distanceM, durationS: demo.route.durationS } : null,
+      demo: demo ? { startedAt: demo.startedAt, speed: DEMO_TIME_COMPRESSION } : null,
+    });
+  });
+
+  // One step of the on-demand demo. Guards, in order: feature on (DEV_TOOLS=1 and the fake provider) else 404; rate limits per IP
+  // and per order else 429; the order's own token else 403. Idempotent by construction: see DemoRunner.
+  app.post("/orders/:id/demo/step", async (c) => {
+    if (!demoAllowed(c)) return c.json({ error: "not_found" }, 404);
+    const id = c.req.param("id");
+    const limiter = services.rateLimiter?.(c.env ?? {}) ?? demoMemory;
+    const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    if (!(await limiter.allow(`demo-ip:${ip}`)) || !(await limiter.allow(`demo-order:${id}`))) return c.json({ error: "rate_limited" }, 429);
+    if (!(await c.var.engine.store.getOrder(id))) return c.json({ error: "not_found" }, 404);
+    if (!(await tokenOk(c, id, c.req.header("x-order-token")))) return c.json({ error: "forbidden", message: "not your order" }, 403);
+    const cap = Number(c.env?.DEMO_DAILY_STEP_CAP);
+    const runner = new DemoRunner(c.var.engine, services.routes?.(c.env ?? {}) ?? new StraightLineRouteProvider(), {
+      dailyStepCap: Number.isFinite(cap) && cap > 0 ? cap : DEMO_DEFAULT_DAILY_STEP_CAP,
+      capMemo: demoCapMemo,
+      now: services.demoClock,
+    });
+    const r = await runner.step(id);
+    if (!r.ok) return c.json({ error: r.error.code, message: r.error.message }, DEMO_STATUS[r.error.code]);
+    const { ok: _ok, ...body } = r;
+    return c.json(body);
   });
 
   app.get("/orders/:id/track", async (c) => {
@@ -312,13 +374,14 @@ export function createApp(services: AppServices) {
       const pay = await e.store.getPaymentByOrder(o.id);
       return { id: o.id, isSimulated: o.isSimulated, ...o.view, paymentStatus: pay?.status ?? null, events: events.map((x) => ({ type: x.event.type, at: x.event.at })) };
     };
-    const simDrivers = new Set(drivers.filter((d) => d.isSimulated).map((d) => d.id));
+    // Demo drivers belong to the on-demand demo (driven by visitors' own steps), so the burst simulator must not touch them.
+    const simDrivers = new Set(drivers.filter((d) => d.isSimulated && !isDemoDriverId(d.id)).map((d) => d.id));
     // Its own orders, new orders awaiting station staff, and visitors' orders a simulated driver is carrying.
     const relevant = orders.filter((o) => o.isSimulated || o.view.state === "placed" || (o.view.driverId && simDrivers.has(o.view.driverId)));
     return c.json({
       now: e.now(),
       orders: await Promise.all(relevant.map(detail)),
-      drivers: drivers.filter((d) => d.isSimulated),
+      drivers: drivers.filter((d) => d.isSimulated && !isDemoDriverId(d.id)),
     });
   });
 

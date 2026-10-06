@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { distanceToGo } from "@noir/core/motion";
 import { api, money, STATE_LABEL, trackSocket, type OrderDto, type OrderState, type TrackPoint } from "./api";
-import { clock, haversine, km } from "./hooks";
-import { LiveMap, type Pin } from "./LiveMap";
+import { useDemo } from "./demo";
+import { clock, km } from "./hooks";
+import { LiveMap, type MapLine, type Pin } from "./LiveMap";
+import { MapLegend, MapSummary, type LegendItem } from "./MapLegend";
 
 const STEPS: OrderState[] = ["placed", "accepted", "assigned", "en_route", "arrived", "delivering", "completed"];
 const TERMINAL = new Set<OrderState>(["completed", "cancelled"]);
@@ -29,16 +32,27 @@ function describeEvent(e: OrderDto["events"][number]) {
 export function OrderPage() {
   const { id = "" } = useParams();
   const qc = useQueryClient();
+  const lastState = useRef<OrderState | null>(null);
+  // While the demo runs, its steps report state changes, so the 3 s order poll is switched off (less to fetch, less database time).
+  const demo = useDemo(id, (s) => {
+    if (s.state !== lastState.current) void qc.invalidateQueries({ queryKey: ["order", id] });
+    if (s.routeSource) void qc.invalidateQueries({ queryKey: ["route", id] });
+  });
   const order = useQuery({
     queryKey: ["order", id],
     queryFn: () => api.order(id),
-    refetchInterval: (q) => (q.state.data && TERMINAL.has(q.state.data.state) ? false : 3000),
+    refetchInterval: (q) => (q.state.data && TERMINAL.has(q.state.data.state) ? false : demo.running ? false : 3000),
   });
   const stations = useQuery({ queryKey: ["stations"], queryFn: api.stations });
+  const config = useQuery({ queryKey: ["config"], queryFn: api.config, staleTime: Infinity });
   const [live, setLive] = useState<TrackPoint | null>(null);
 
   const o = order.data;
+  lastState.current = o?.state ?? null;
   const watching = !!o && !TERMINAL.has(o.state) && ["assigned", "en_route", "arrived", "delivering"].includes(o.state);
+  // The road route exists only for orders that ran the demo. Fetched once (it never changes) and again when a step reports it.
+  const routeQ = useQuery({ queryKey: ["route", id], queryFn: () => api.route(id), enabled: !!o && (watching || demo.status !== "idle"), staleTime: Infinity });
+  const route = useMemo(() => routeQ.data?.route?.points.map(([lat, lng]) => ({ lat, lng })) ?? null, [routeQ.data]);
   useEffect(() => {
     if (!watching) return;
     return trackSocket(id, (m) => {
@@ -56,19 +70,36 @@ export function OrderPage() {
   const [note, setNote] = useState("");
 
   const station = stations.data?.find((s) => s.id === o?.stationId);
+  const driverLive = live && watching ? live : null;
   const pins = useMemo<Pin[]>(() => {
     if (!o) return [];
     const out: Pin[] = [{ id: "dropoff", kind: "dropoff", lat: o.dropoff.lat, lng: o.dropoff.lng, label: `Drop-off: ${o.dropoff.label}` }];
-    if (station) out.push({ id: "station", kind: "station", lat: station.lat, lng: station.lng, label: station.name });
-    if (live && watching) out.push({ id: "driver", kind: "driver-busy", lat: live.lat, lng: live.lng, label: `Driver ${live.driverId}` });
+    if (station) out.push({ id: "station", kind: "station", lat: station.lat, lng: station.lng, label: `Station: ${station.name}` });
+    if (driverLive) out.push({ id: "driver", kind: "driver", lat: driverLive.lat, lng: driverLive.lng, label: `Driver ${driverLive.driverId}`, route });
     return out;
-  }, [o, station, live, watching]);
+  }, [o, station, driverLive, route]);
+
+  const lines = useMemo<MapLine[]>(() => {
+    if (!o || TERMINAL.has(o.state)) return [];
+    if (route) return [{ id: "route", kind: "route", points: route }];
+    // No road data (simulator orders, or the routing service was unavailable): say so on the map with a dashed straight line.
+    const from = driverLive ?? station;
+    return from ? [{ id: "straight", kind: "straight", points: [from, o.dropoff] }] : [];
+  }, [o, route, driverLive, station]);
+
+  const fitTo = useMemo(() => [...(station ? [station] : []), ...(o ? [o.dropoff] : []), ...(driverLive ? [driverLive] : [])], [station, o, driverLive]);
 
   if (order.isPending) return <p className="meta">Loading order…</p>;
   if (!o) return <p role="alert" className="error">Order not found.</p>;
 
+  const legend: LegendItem[] = [
+    { kind: "station", label: "Station" },
+    { kind: "dropoff", label: "Your drop-off" },
+    ...(driverLive ? ([{ kind: "driver", label: "Driver (arrow shows heading)" }] as LegendItem[]) : []),
+    ...(lines.length ? ([route ? { line: "route", label: routeQ.data?.route?.source === "osrm" ? "Road route" : "Straight-line route (road routing unavailable)" } : { line: "straight", label: "Straight line (no road data)" }] as LegendItem[]) : []),
+  ];
   const stepIndex = STEPS.indexOf(o.state);
-  const distance = live && watching ? km(haversine(live, o.dropoff)) : null;
+  const distance = driverLive ? km(distanceToGo(route, driverLive, o.dropoff)) : null;
   const canCancel = o.actions.customer?.includes("order_cancelled");
   const canModify = o.actions.customer?.includes("order_modified");
   const needsPayment = o.payment?.status === "requires_payment" && o.state !== "cancelled";
@@ -97,12 +128,20 @@ export function OrderPage() {
       {watching && (
         <p className="live" aria-live="off">
           <span className="dot" aria-hidden="true" /> Live: driver {o.driverId}
-          {distance ? `, ${distance} from you` : ", waiting for first position"}
+          {distance ? `, ${distance} from you${route ? " by road" : ""}` : ", waiting for first position"}
         </p>
       )}
 
-      <LiveMap pins={pins} label="Map of your delivery" fit />
-      <p className="attribution-note meta">Simulated driver on a made-up route. Map data OpenStreetMap contributors.</p>
+      <LiveMap pins={pins} lines={lines} label="Map of your delivery" fitTo={fitTo} fitKey={`d${driverLive ? 1 : 0}`} />
+      <MapLegend items={legend} />
+      <MapSummary
+        items={[
+          { role: "Driver", text: driverLive ? `${distance} from the drop-off${route ? " by road" : " in a straight line"}` : watching ? "waiting for the first position" : o.state === "completed" ? "delivered" : "not on the way yet" },
+          { role: "Station", text: station?.name ?? o.stationId },
+          { role: "Drop-off", text: o.dropoff.label },
+        ]}
+      />
+      <p className="attribution-note meta">Simulated driver, no real fuel. {route ? (routeQ.data?.route?.source === "osrm" ? "Road route from OpenStreetMap's public routing demo server (OSRM)." : "Straight line: road routing was unavailable for this order.") : "No road data for this order: the driver moves in a straight line."} Map data OpenStreetMap contributors.</p>
 
       <section className="panel" aria-labelledby="summary">
         <h2 id="summary">Summary</h2>
@@ -133,6 +172,38 @@ export function OrderPage() {
           </div>
         )}
       </section>
+
+      {o.payment?.status === "succeeded" && !TERMINAL.has(o.state) && config.data?.demo.available && (
+        <section className="panel stack" aria-labelledby="demo">
+          <h2 id="demo">Run demo</h2>
+          <p>
+            No real driver is coming, so this plays the station and a simulated driver for you. It only runs while this tab is open and visible, and it stops by
+            itself when the delivery finishes.
+          </p>
+          <div className="row">
+            {demo.running ? (
+              <button type="button" onClick={demo.stop}>Pause demo</button>
+            ) : (
+              <button type="button" className="primary" onClick={demo.start}>Run demo</button>
+            )}
+          </div>
+          <p className="meta" data-testid="demo-speed">
+            Demo speed: {config.data.demo.speed}x. One real second is {config.data.demo.speed} simulated seconds, so a trip the router puts at 10 minutes takes about {Math.round((10 * 60) / config.data.demo.speed)} s here.
+            {demo.last?.routeSource ? ` Route: ${demo.last.routeSource === "osrm" ? "road route (OpenStreetMap routing demo server)" : "straight line (road routing unavailable)"}.` : ""}
+          </p>
+          {demo.last && demo.running && (
+            <>
+              <label className="meter">
+                <span className="meta">Demo progress</span>
+                <progress max={1} value={demo.last.progress} />
+              </label>
+              {demo.last.etaRealS !== null && <p className="meta">Driver arrives in about {Math.max(1, Math.round(demo.last.etaRealS))} s at demo speed.</p>}
+              {demo.last.preparing && <p className="meta">Looking up the road route…</p>}
+            </>
+          )}
+          <p role="status" aria-live="polite" className="meta">{demo.message}</p>
+        </section>
+      )}
 
       {(canCancel || canModify) && (
         <section className="panel stack" aria-labelledby="change">

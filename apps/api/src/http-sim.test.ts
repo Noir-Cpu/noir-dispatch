@@ -1,4 +1,5 @@
 import { runBurst, type BurstReport } from "@noir/sim";
+import { DELIVERY_RADIUS_KM, haversineMeters } from "@noir/core";
 import { createLocalEngine, type LocalEngine } from "@noir/engine/local";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app";
@@ -10,6 +11,10 @@ afterEach(() => k?.close());
 // The runner talks HTTP; here "HTTP" is the Hono app in process and time is the engine's virtual clock.
 async function harness() {
   k = await createLocalEngine();
+  return wire();
+}
+const harness2 = async () => wire();
+function wire() {
   const app = createApp({ engine: () => k!.engine, devPay: (_e, id) => k!.payOrder(id), opsSession: async (_e, req) => (req.headers.get("x-ops") ? { login: "noir-cpu" } : null) });
   const calls: { t: number; path: string }[] = [];
   const fetchImpl = (async (url: string, init: RequestInit) => {
@@ -17,7 +22,7 @@ async function harness() {
     calls.push({ t: k!.clock.now, path });
     return app.request(path, init, ENV);
   }) as unknown as typeof fetch;
-  const kk = k;
+  const kk = k!;
   const burst = (over: Partial<Parameters<typeof runBurst>[0]> = {}): Promise<BurstReport> =>
     runBurst({
       baseUrl: "http://sim.test",
@@ -75,6 +80,31 @@ describe("HTTP-mode simulator", () => {
     expect(drivers.every((d) => d.isSimulated && d.id.startsWith("sim-drv-"))).toBe(true);
     // Every request carried the token, and none went to an ops endpoint.
     expect(h.calls.some((c) => c.path === "/api/orders" || c.path === "/api/drivers")).toBe(false);
+  });
+
+  it("places every drop-off inside the delivery radius of its station, and never asks for a road route", async () => {
+    const h = await harness();
+    const report = await h.burst({ durationMs: 6 * 60_000 });
+    expect(report.ordersPlaced).toBeGreaterThan(2);
+    const stations = new Map((await h.k.store.listStations()).map((s) => [s.id, s]));
+    const sims = (await h.k.store.listOrders()).filter((o) => o.isSimulated);
+    expect(sims.length).toBe(report.ordersPlaced);
+    for (const o of sims) expect(haversineMeters(stations.get(o.view.stationId)!, o.view.dropoff) / 1000).toBeLessThan(DELIVERY_RADIUS_KM);
+    // Only the simulator's own stations: it never uses the visitor-only ones, so its published numbers stay comparable.
+    expect(sims.every((o) => ["st-cbd", "st-sea-point", "st-claremont", "st-bellville", "st-century-city"].includes(o.view.stationId))).toBe(true);
+    expect(h.calls.every((c) => !c.path.includes("/route") && !c.path.includes("/demo/"))).toBe(true);
+    expect(await h.k.store.getDemo(sims[0]!.id)).toBeNull();
+  });
+
+  it("refuses to run with a drop-off distance outside the radius, and survives a server whose radius is smaller", async () => {
+    const h = await harness();
+    await expect(h.burst({ maxDropoffKm: 12 })).rejects.toThrow(/delivery radius/);
+    await h.k.close();
+    k = await createLocalEngine({ config: { deliveryRadiusKm: 0.3 } }); // nearly every simulated drop-off is now too far
+    const h2 = await harness2();
+    const report = await h2.burst({ durationMs: 60_000 });
+    expect(report.transitions.refused_out_of_radius).toBeGreaterThan(0);
+    expect(report.stoppedBy).toBe("duration");
   });
 
   it("stays inside its request budget and its rate limit", async () => {

@@ -6,7 +6,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { WebSocketServer } from "ws";
-import type { TrackHub } from "@noir/core";
+import { FallbackRouteProvider, OsrmRouteProvider, StraightLineRouteProvider, type TrackHub } from "@noir/core";
 import type { LocalEngine } from "@noir/engine/local";
 import { createApp } from "./app";
 
@@ -18,6 +18,12 @@ export async function startLocalServer(k: LocalEngine, port: number, opts: { ope
   const api = createApp({
     engine: () => k.engine,
     devPay: (_env, orderId) => k.payOrder(orderId),
+    demoClock: Date.now, // the engine clock here is simulated (and runs at SIM_TIME_SCALE); the demo plays in real time
+    // Straight lines unless ROUTE_PROVIDER=osrm: dev runs and CI must not lean on the public OSRM demo server.
+    routes: () =>
+      process.env.ROUTE_PROVIDER === "osrm"
+        ? new FallbackRouteProvider(new OsrmRouteProvider({ userAgent: "noir-dispatch-dev/1.0 (+https://github.com/Noir-Cpu/noir-dispatch)" }), new StraightLineRouteProvider(), (why) => console.warn("route lookup failed:", why))
+        : new StraightLineRouteProvider(),
     opsSession: opts.open === false ? undefined : async () => ({ login: "dev" }),
   });
 

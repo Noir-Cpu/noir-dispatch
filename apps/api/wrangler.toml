@@ -9,6 +9,13 @@ directory = "../web/dist"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*"]
 
+# Plain (non-secret) settings. Secrets stay in `wrangler secret put` (docs/SETUP.md).
+[vars]
+# Straight-line km from the chosen station within which orders are accepted (ADR 0014). Anything unusable falls back to 12.
+DELIVERY_RADIUS_KM = "12"
+# Global cap on "Run demo" steps per UTC day. This is what bounds Neon compute spent on demos (ADR 0016). About 40 steps per typical run (measured: 39 for a 6 km trip).
+DEMO_DAILY_STEP_CAP = "400"
+
 [observability]
 enabled = true
 
