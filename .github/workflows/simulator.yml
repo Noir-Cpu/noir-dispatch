@@ -9,16 +9,23 @@ on:
 concurrency:
   group: simulator
   cancel-in-progress: false
+permissions:
+  contents: read
 jobs:
   burst:
-    if: vars.SIMULATOR_ENABLED == 'true'
+    # Only in this repository (a fork has neither the variable nor the secret) and only when switched on.
+    if: github.repository == 'Noir-Cpu/noir-dispatch' && vars.SIMULATOR_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      # SIM_TOKEN is only ever sent over HTTPS.
+      - run: case "$SIM_URL" in https://*) ;; *) echo "SIMULATOR_URL must start with https://"; exit 1;; esac
+        env:
+          SIM_URL: ${{ vars.SIMULATOR_URL }}
       # 240 s and at most 400 requests per burst, 48 bursts a day: see README "Request budget".
       - run: npm run sim:http -w @noir/sim -- --url "$SIM_URL" --seed "$GITHUB_RUN_NUMBER" --seconds 240 --max-requests 400
         env:

@@ -3,10 +3,57 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DISPATCH: fuel delivery (simulated)</title>
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#efebe2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#110f0d" media="(prefers-color-scheme: dark)" />
+    <title>DISPATCH: simulated fuel delivery demo with live tracking</title>
+    <meta name="description" content="A simulated on-demand fuel delivery demo. Pick a station, drop a pin, pay with a test card and watch a simulated driver on a live map. No real fuel or money." />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://noir-dispatch-api.noir-cpu.workers.dev/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DISPATCH" />
+    <meta property="og:title" content="DISPATCH: simulated fuel delivery demo with live tracking" />
+    <meta property="og:description" content="Pick a station, drop a pin, pay with a test card and watch a simulated driver on a live map. A simulation: no real fuel is delivered and no real payment is taken." />
+    <meta property="og:url" content="https://noir-dispatch-api.noir-cpu.workers.dev/" />
+    <meta property="og:image" content="https://noir-dispatch-api.noir-cpu.workers.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="DISPATCH: a map of Cape Town with a station, a drop-off pin and a driver on the road between them. Simulated demo." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DISPATCH: simulated fuel delivery demo with live tracking" />
+    <meta name="twitter:description" content="Pick a station, drop a pin, pay with a test card and watch a simulated driver on a live map. A simulation." />
+    <meta name="twitter:image" content="https://noir-dispatch-api.noir-cpu.workers.dev/og.png" />
+
+    <!-- Structured data is data, not script: the strict Content-Security-Policy (script-src 'self') does not apply to it. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "DISPATCH",
+        "url": "https://noir-dispatch-api.noir-cpu.workers.dev/",
+        "description": "A simulated on-demand fuel delivery demo: choose a station, set a drop-off, pay with a test card and follow a simulated driver on a live map.",
+        "disambiguatingDescription": "Simulation only. No real fuel is delivered and no real payment is taken.",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Any, in a web browser",
+        "browserRequirements": "Requires JavaScript",
+        "inLanguage": "en",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@type": "Organization", "name": "Noir-Cpu", "url": "https://github.com/Noir-Cpu" },
+        "sameAs": ["https://github.com/Noir-Cpu/noir-dispatch"]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <h1>DISPATCH: simulated fuel delivery demo</h1>
+      <p>Pick a station, set a drop-off, pay with a test card and follow a simulated driver on a live map. This is a simulation: no fuel is delivered and no real payment is taken.</p>
+      <p>The app needs JavaScript. Source and write-up: <a href="https://github.com/Noir-Cpu/noir-dispatch">github.com/Noir-Cpu/noir-dispatch</a>.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

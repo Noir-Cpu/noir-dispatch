@@ -22,6 +22,9 @@ export function createAuth(env: AuthEnv, requestUrl: string) {
     secret: env.BETTER_AUTH_SECRET,
     baseURL: origin,
     trustedOrigins: [origin],
+    // Explicit rather than inherited from the library defaults, so a library change cannot quietly weaken the ops session cookie:
+    // HttpOnly (script cannot read it), SameSite=Lax (not sent on cross-site POSTs), Secure and the __Secure- prefix on https.
+    advanced: { useSecureCookies: origin.startsWith("https://"), defaultCookieAttributes: { httpOnly: true, sameSite: "lax", path: "/" } },
     emailAndPassword: { enabled: false },
     socialProviders:
       env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET

@@ -1,0 +1,25 @@
+# Headers for static files, applied by Cloudflare Workers static assets (the Worker's own /api responses get theirs in apps/api/src/security.ts).
+# The local dev server reads this same file, so the Playwright CSP test checks exactly what is deployed.
+# Rules are additive: a path gets every block that matches it.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://tile.openstreetmap.org; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+
+# File names carry a content hash, so they never change: cache for a year.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Private or per-person pages stay out of search results. (The SPA also sets a robots meta tag; this header covers crawlers that do not run scripts.)
+/ops
+  X-Robots-Tag: noindex, nofollow
+/order/*
+  X-Robots-Tag: noindex, nofollow
+/orders/*
+  X-Robots-Tag: noindex, nofollow

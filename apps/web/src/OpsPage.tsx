@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ApiError, api, money, STATE_LABEL, type OrderRow } from "./api";
 import { authClient } from "./auth-client";
 import { clock, useLivePositions } from "./hooks";
-import { LiveMap, type Pin } from "./LiveMap";
+import { LiveMap, type Pin } from "./LazyMap";
 import { MapLegend, MapSummary } from "./MapLegend";
 
 const LIVE_STATES = new Set(["assigned", "en_route", "arrived", "delivering"]);
