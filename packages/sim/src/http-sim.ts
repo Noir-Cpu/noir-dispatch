@@ -59,7 +59,13 @@ export type BurstReport = {
 };
 
 export async function runBurst(partial: Partial<HttpSimConfig> & Pick<HttpSimConfig, "baseUrl" | "token" | "seed">): Promise<BurstReport> {
-  const cfg = { ...HTTP_SIM_DEFAULTS, ...partial } as HttpSimConfig;
+  // An explicit `undefined` (what a CLI passes for a flag the user left out) must not override a default: that once
+  // silently removed the request cap and the driver count. Drop undefined keys, and refuse non-finite numbers.
+  const given = Object.fromEntries(Object.entries(partial).filter(([, v]) => v !== undefined));
+  const cfg = { ...HTTP_SIM_DEFAULTS, ...given } as HttpSimConfig;
+  for (const k of ["drivers", "minActive", "durationMs", "tickMs", "maxRequests", "maxRps", "speedKmh", "maxDropoffKm"] as const) {
+    if (!Number.isFinite(cfg[k]) || cfg[k] < 0) throw new Error(`invalid simulator setting ${k}: ${String(cfg[k])}`);
+  }
   const f = cfg.fetch ?? fetch;
   const sleep = cfg.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = cfg.now ?? Date.now;

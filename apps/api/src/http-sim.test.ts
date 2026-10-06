@@ -36,6 +36,19 @@ async function harness() {
 }
 
 describe("HTTP-mode simulator", () => {
+  it("falls back to the defaults for settings passed as undefined, so the request cap can never be lost", async () => {
+    const h = await harness();
+    const report = await h.burst({ drivers: undefined, minActive: undefined, maxRequests: undefined, durationMs: 60_000 });
+    expect(report.budget).toBe(400); // HTTP_SIM_DEFAULTS.maxRequests, not undefined
+    expect(report.requests).toBeLessThanOrEqual(400);
+    expect(report.ordersPlaced).toBeGreaterThan(0); // default minActive and drivers applied
+  });
+
+  it("refuses a non-numeric setting instead of running uncapped", async () => {
+    const h = await harness();
+    await expect(h.burst({ maxRequests: Number("abc") })).rejects.toThrow(/invalid simulator setting maxRequests/);
+  });
+
   it("drives orders from placed to completed over the public API, touching only simulated records", async () => {
     const h = await harness();
     // A visitor's order (not simulated): the runner should accept it as station staff and a sim driver should deliver it.
