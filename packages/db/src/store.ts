@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import type {
   Actor,
   Customer,
+  DemoRecord,
   Driver,
   DriverStatus,
   LocationPoint,
@@ -61,6 +62,19 @@ const toDriver = (d: typeof t.drivers.$inferSelect): Driver => ({
   lng: d.lng,
   locationAt: d.locationAt?.getTime() ?? null,
   isSimulated: d.isSimulated,
+});
+
+const toDemo = (d: typeof t.orderDemos.$inferSelect): DemoRecord => ({
+  orderId: d.orderId,
+  startedAt: d.startedAt.getTime(),
+  lastStepAt: d.lastStepAt.getTime(),
+  demoMs: d.demoMs,
+  steps: d.steps,
+  routePending: d.routeSource === "pending",
+  route:
+    d.routePoints && d.routeSource && d.routeSource !== "pending"
+      ? { points: d.routePoints.map(([lat, lng]) => ({ lat, lng })), source: d.routeSource as "osrm" | "straight", distanceM: d.routeDistanceM ?? 0, durationS: d.routeDurationS ?? 0 }
+      : null,
 });
 
 export class DrizzleStore implements Store {
@@ -252,6 +266,43 @@ export class DrizzleStore implements Store {
     const res = await this.db.execute(sql`
       delete from orders where is_simulated and state in ('completed', 'cancelled') and updated_at < ${cutoff}::timestamptz returning id`);
     return rows(res).length;
+  }
+  async startDemo(orderId: string, at: number) {
+    const res = await this.db.execute(
+      sql`insert into order_demos (order_id, started_at, last_step_at) values (${orderId}, ${iso(at)}::timestamptz, ${iso(at)}::timestamptz) on conflict do nothing returning order_id`,
+    );
+    return rows(res).length === 1;
+  }
+  async getDemo(orderId: string): Promise<DemoRecord | null> {
+    const [r] = await this.db.select().from(t.orderDemos).where(eq(t.orderDemos.orderId, orderId));
+    return r ? toDemo(r) : null;
+  }
+  async claimDemoRoute(orderId: string) {
+    const res = await this.db.execute(sql`update order_demos set route_source = 'pending' where order_id = ${orderId} and route_source is null returning order_id`);
+    return rows(res).length === 1;
+  }
+  async setDemoRoute(orderId: string, route: NonNullable<DemoRecord["route"]>) {
+    const pts = JSON.stringify(route.points.map((p) => [p.lat, p.lng]));
+    const res = await this.db.execute(sql`
+      update order_demos set route_points = ${pts}::jsonb, route_source = ${route.source}, route_distance_m = ${Math.round(route.distanceM)}, route_duration_s = ${Math.round(route.durationS)}
+      where order_id = ${orderId} and (route_source is null or route_source = 'pending') returning order_id`);
+    return rows(res).length === 1;
+  }
+  async advanceDemo(orderId: string, now: number, maxGapMs: number) {
+    const res = await this.db.execute(sql`
+      update order_demos set
+        demo_ms = demo_ms + greatest(0, least(${maxGapMs}::int, (extract(epoch from (${iso(now)}::timestamptz - last_step_at)) * 1000)::int)),
+        last_step_at = greatest(last_step_at, ${iso(now)}::timestamptz),
+        steps = steps + 1
+      where order_id = ${orderId} returning demo_ms, steps`);
+    const r = rows<{ demo_ms: number; steps: number }>(res)[0];
+    return r ? { demoMs: r.demo_ms, steps: r.steps } : null;
+  }
+  async bumpDemoUsage(day: string, cap: number) {
+    const res = await this.db.execute(
+      sql`insert into demo_usage (day, steps) values (${day}, 1) on conflict (day) do update set steps = demo_usage.steps + 1 where demo_usage.steps < ${cap}::int returning steps`,
+    );
+    return rows(res).length === 1;
   }
   async recordWebhookEvent(eventId: string, type: string, at: number) {
     const res = await this.db.execute(

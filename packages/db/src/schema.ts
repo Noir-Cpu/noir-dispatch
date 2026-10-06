@@ -117,6 +117,30 @@ export const payments = pgTable(
   ],
 );
 
+/**
+ * On-demand demo state for an order (additive, nullable route). One row per order that has had "Run demo" pressed.
+ * The route is looked up once and cached here, so the routing server is never asked twice for one order.
+ */
+export const orderDemos = pgTable("order_demos", {
+  orderId: text("order_id").primaryKey().references(() => orders.id),
+  startedAt: ts("started_at").notNull(),
+  lastStepAt: ts("last_step_at").notNull(),
+  demoMs: integer("demo_ms").notNull().default(0),
+  steps: integer("steps").notNull().default(0),
+  /** [lat, lng] pairs, simplified and rounded; null until looked up. */
+  routePoints: jsonb("route_points").$type<[number, number][] | null>(),
+  /** "pending" while one request holds the lookup, then "osrm" or "straight". */
+  routeSource: text("route_source"),
+  routeDistanceM: integer("route_distance_m"),
+  routeDurationS: integer("route_duration_s"),
+});
+
+/** Demo steps taken per UTC day: one tiny row a day, the global cap that bounds Neon compute. */
+export const demoUsage = pgTable("demo_usage", {
+  day: text("day").primaryKey(),
+  steps: integer("steps").notNull().default(0),
+});
+
 /** At most one charge per payment, enforced by the primary key. */
 export const paymentCharges = pgTable("payment_charges", {
   paymentId: text("payment_id").primaryKey().references(() => payments.id),

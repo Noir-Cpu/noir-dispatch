@@ -25,6 +25,10 @@ jobs:
       - run: npm run migrate -w @noir/db
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+      # Idempotent upsert of the demo stations (docs/adr/0014): new stations appear on deploy, existing rows are re-written with the same values.
+      - run: npm run seed -w @noir/engine
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
       - run: npx wrangler deploy
         working-directory: apps/api
         env:

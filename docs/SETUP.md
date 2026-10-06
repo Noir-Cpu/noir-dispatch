@@ -1,6 +1,6 @@
 # Deploying DISPATCH: what John must do
 
-Nothing here has been done. No database exists, so nothing is deployed and `.github/workflows/deploy.yml` was removed (a saved copy is at `docs/deploy.yml.example`; step 8 puts it back). The simulator workflow (`.github/workflows/simulator.yml`) is in place but does nothing until you set `SIMULATOR_ENABLED=true`.
+This describes the original setup, which is done: the Worker is deployed and `.github/workflows/deploy.yml` is live. Every push to `main` that passes CI runs the migrations, then the station seed (`npm run seed -w @noir/engine`, an idempotent upsert, both with `DATABASE_URL_DIRECT`), then `wrangler deploy`. The simulator workflow (`.github/workflows/simulator.yml`) does nothing until you set `SIMULATOR_ENABLED=true`; leave it off to keep Neon compute for the demo.
 
 ## 1. Create the Neon project
 
@@ -13,6 +13,10 @@ Nothing here has been done. No database exists, so nothing is deployed and `.git
 DATABASE_URL='<direct url>' npm run migrate -w @noir/db
 DATABASE_URL='<direct url>' npm run seed -w @noir/engine
 ```
+
+## Plain settings (no secret needed)
+
+`apps/api/wrangler.toml` has `[vars]`: `DELIVERY_RADIUS_KM` (default 12) and `DEMO_DAILY_STEP_CAP` (default 400 demo steps per UTC day, about 10 typical runs; see ADR 0016 before raising it). "Run demo" works only with `DEV_TOOLS=1` (the secret from step 4) and the fake payment provider. Routes come from OSRM's public demo server with no key; set nothing. Locally, routes are straight lines unless you start the dev server with `ROUTE_PROVIDER=osrm`.
 
 ## 3. GitHub OAuth app (ops sign-in)
 

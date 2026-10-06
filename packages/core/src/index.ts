@@ -9,3 +9,8 @@ export * from "./payments/test-provider";
 export * from "./payments/paystack";
 export * from "./payments/stripe";
 export * from "./payments/hmac";
+export * from "./polyline";
+export * from "./delivery";
+export * from "./route";
+export * from "./demo";
+export * from "./motion";

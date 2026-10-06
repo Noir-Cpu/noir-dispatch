@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ApiError, api, money, STATE_LABEL, type OrderRow } from "./api";
 import { authClient } from "./auth-client";
 import { clock, useLivePositions } from "./hooks";
 import { LiveMap, type Pin } from "./LiveMap";
+import { MapLegend, MapSummary } from "./MapLegend";
 
 const LIVE_STATES = new Set(["assigned", "en_route", "arrived", "delivering"]);
 
@@ -37,6 +38,13 @@ function OpsConsole({ login }: { login: string }) {
   const activeRows = rows.filter((o) => LIVE_STATES.has(o.state) && o.driverId);
   const live = useLivePositions(activeRows.map((o) => o.id));
   const liveByDriver = new Map(Object.values(live).map((p) => [p.driverId, p]));
+  // Road routes for deliveries that ran the demo (null for the rest). Fetched once each; they never change.
+  const routeQs = useQueries({ queries: activeRows.map((o) => ({ queryKey: ["route", o.id], queryFn: () => api.route(o.id), staleTime: Infinity })) });
+  const routeByDriver = new Map<string, { lat: number; lng: number }[]>();
+  activeRows.forEach((o, i) => {
+    const pts = routeQs[i]?.data?.route?.points;
+    if (o.driverId && pts) routeByDriver.set(o.driverId, pts.map(([lat, lng]) => ({ lat, lng })));
+  });
 
   const counts = useMemo(() => {
     const d = drivers.data ?? [];
@@ -53,11 +61,11 @@ function OpsConsole({ login }: { login: string }) {
     for (const d of drivers.data ?? []) {
       if (d.status === "offline") continue;
       const p = liveByDriver.get(d.id);
-      out.push({ id: `dr-${d.id}`, kind: d.status === "busy" ? "driver-busy" : "driver", lat: p?.lat ?? d.lat, lng: p?.lng ?? d.lng, label: `${d.name} (${d.status})` });
+      out.push({ id: `dr-${d.id}`, kind: d.status === "busy" ? "driver" : "driver-idle", lat: p?.lat ?? d.lat, lng: p?.lng ?? d.lng, label: `${d.name} (${d.status})`, route: routeByDriver.get(d.id) ?? null });
     }
     for (const o of rows) if (o.state !== "completed" && o.state !== "cancelled") out.push({ id: `or-${o.id}`, kind: "dropoff", lat: o.dropoff.lat, lng: o.dropoff.lng, label: `${o.id.slice(-6)}: ${o.dropoff.label}`, selected: o.id === selected });
     return out;
-  }, [stations.data, drivers.data, rows, selected, live]);
+  }, [stations.data, drivers.data, rows, selected, live, routeQs.map((q) => q.dataUpdatedAt).join(",")]);
 
   return (
     <div className="stack wide">
@@ -70,7 +78,25 @@ function OpsConsole({ login }: { login: string }) {
         <div><dt>Drivers offline</dt><dd>{counts.offline}</dd></div>
       </dl>
 
-      <LiveMap pins={pins} label="Map of active orders, stations and drivers" />
+      <LiveMap pins={pins} label="Map of active orders, stations and drivers" fitKey="ops" />
+      <MapLegend
+        items={[
+          { kind: "station", label: "Station" },
+          { kind: "dropoff", label: "Drop-off of an active order" },
+          { kind: "driver", label: "Driver on a delivery (arrow shows heading)" },
+          { kind: "driver-idle", label: "Driver waiting for a job" },
+          { line: "route", label: "Road still to drive" },
+        ]}
+      />
+      <MapSummary
+        label="Map in words"
+        items={[
+          { role: "Stations", text: `${stations.data?.length ?? 0}` },
+          { role: "Active orders (drop-offs)", text: `${counts.active}` },
+          { role: "Drivers on a delivery", text: `${counts.busy}` },
+          { role: "Drivers waiting", text: `${counts.available}` },
+        ]}
+      />
 
       <div className="row">
         <label className="check">

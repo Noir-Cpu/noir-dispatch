@@ -3,8 +3,12 @@ import {
   type TrackPublisher,
   WebhookIgnored,
   WebhookSignatureError,
+  DELIVERY_RADIUS_KM,
+  isDemoDriverId,
+  rangeAdvice,
   rankDrivers,
   transition,
+  withinRadius,
   type Actor,
   type Dropoff,
   type EtaProvider,
@@ -28,6 +32,8 @@ export type EngineConfig = {
   maxWaitMs: number;
   /** Persist one driver point per this many ms. Strategy doc capacity table: 30 s. */
   downsampleMs: number;
+  /** Straight-line km from the chosen station within which an order may be placed or moved. Default DELIVERY_RADIUS_KM. */
+  deliveryRadiusKm: number;
 };
 
 export type EngineMetric =
@@ -81,12 +87,12 @@ export class Engine {
     this.clock = deps.clock ?? Date.now;
     this.newId = deps.newId ?? (() => crypto.randomUUID());
     this.perfNow = deps.perfNow ?? (() => performance.now());
-    this.config = { currency: "ZAR", cancelFeeCents: 5_000, maxWaitMs: 15 * 60_000, downsampleMs: 30_000, ...deps.config };
+    this.config = { currency: "ZAR", cancelFeeCents: 5_000, maxWaitMs: 15 * 60_000, downsampleMs: 30_000, deliveryRadiusKm: DELIVERY_RADIUS_KM, ...deps.config };
     this.hub =
       deps.hub ??
       new TrackHub({
         downsampleMs: this.config.downsampleMs,
-        persist: (p) => void this.store.recordLocationIfDue(p, 0),
+        persist: (p) => void this.store.recordLocationIfDue(p, 0).catch(() => {}), // best effort: a failed write must not break live tracking
       });
   }
 
@@ -95,6 +101,7 @@ export class Engine {
   async placeOrder(input: PlaceInput): Promise<{ order: OrderDetail; created: boolean; clientSecret: string | null }> {
     const station = await this.store.getStation(input.stationId);
     if (!station) throw new EngineError("unknown_station", "station not found");
+    await this.assertInRadius(station, input.dropoff);
     const totalCents = Math.round(station.prices[input.fuel] * input.litres);
     const at = this.clock();
     const event: OrderEvent = {
@@ -140,6 +147,18 @@ export class Engine {
     return { order: (await this.detail(res.id))!, created: res.created, clientSecret: res.created ? intent.clientSecret : null };
   }
 
+  /** Throws out_of_radius (HTTP 422 with the radius in the message) when the point is too far from the station. */
+  private async assertInRadius(station: { id: string; name: string; lat: number; lng: number }, point: { lat: number; lng: number }) {
+    const radiusKm = this.config.deliveryRadiusKm;
+    if (withinRadius(station, point, radiusKm)) return;
+    const a = rangeAdvice(await this.store.listStations(), station.id, point, radiusKm);
+    throw new EngineError("out_of_radius", a.message ?? `That drop-off is outside our ${radiusKm} km delivery radius.`, {
+      radiusKm,
+      distanceKm: a.chosen ? Math.round(a.chosen.distanceKm * 10) / 10 : null,
+      nearestInRange: a.nearestInRange ? { id: a.nearestInRange.station.id, name: a.nearestInRange.station.name, distanceKm: Math.round(a.nearestInRange.distanceKm * 10) / 10 } : null,
+    });
+  }
+
   async detail(id: string): Promise<OrderDetail | null> {
     const rec = await this.store.getOrder(id);
     if (!rec) return null;
@@ -155,6 +174,18 @@ export class Engine {
     for (let attempt = 0; attempt < 5; attempt++) {
       const rec = await this.store.getOrder(orderId);
       if (!rec) return { ok: false, error: { code: "not_found", message: "order not found" } };
+      const moved = input.type === "order_modified" ? (input.data as { dropoff?: Dropoff } | undefined)?.dropoff : undefined;
+      if (moved) {
+        const st = await this.store.getStation(rec.view.stationId);
+        if (st) {
+          try {
+            await this.assertInRadius(st, moved);
+          } catch (e) {
+            if (e instanceof EngineError) return { ok: false, error: { code: "invalid_data", message: e.message } };
+            throw e;
+          }
+        }
+      }
       const data = input.type === "order_modified" && (input.data as { dropoff?: Dropoff })?.dropoff
         ? { ...(input.data as object), dropoff: roundDropoff((input.data as { dropoff: Dropoff }).dropoff) }
         : input.data;
@@ -210,7 +241,9 @@ export class Engine {
     const station = await this.store.getStation(rec.view.stationId);
     if (!station) return null;
 
-    const free = (await this.store.listDrivers({ status: "available" })).filter((d) => d.locationAt !== null);
+    let free = (await this.store.listDrivers({ status: "available" })).filter((d) => d.locationAt !== null);
+    // Demo drivers belong to the on-demand demo: nobody else drives them, so only demo orders may be given one.
+    if (free.some((d) => isDemoDriverId(d.id)) && !(await this.store.getDemo(orderId))) free = free.filter((d) => !isDemoDriverId(d.id));
     const ranked = await rankDrivers({ candidates: free, pickup: station, eta: this.deps.eta, exclude: rec.view.declinedBy });
     for (const cand of ranked) {
       // Claim first: two orders racing for one driver, only one update matches status = 'available'.
@@ -363,6 +396,8 @@ export class EngineError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    /** Extra machine-readable fields for the API error body. */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
