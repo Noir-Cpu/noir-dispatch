@@ -248,6 +248,10 @@ export class DrizzleStore implements Store {
     );
     return rows<{ n: number }>(res)[0]!.n;
   }
+  async deleteDemoUsageBefore(day: string) {
+    const res = await this.db.execute(sql`delete from demo_usage where day < ${day} returning day`);
+    return rows(res).length;
+  }
   async deleteLocationsBefore(beforeMs: number) {
     const res = await this.db.execute(sql`delete from driver_locations where recorded_at < ${iso(beforeMs)}::timestamptz returning id`);
     return rows(res).length;

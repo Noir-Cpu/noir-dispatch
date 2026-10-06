@@ -33,6 +33,27 @@ export function parseAllowList(raw: string | undefined): string[] {
   const list = (raw ?? "Noir-Cpu").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   return list.length ? list : ["noir-cpu"];
 }
+/**
+ * GitHub user ids (numeric, permanent) allowed into the ops console, from OPS_ALLOWED_GITHUB_IDS. Returns null when the variable is unset
+ * or blank, meaning "use the login allow-list". When it is set it is the only rule, and a value with no valid id in it (a typo) allows
+ * nobody rather than falling back to logins.
+ */
+export function parseAllowedIds(raw: string | undefined): string[] | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  return raw.split(",").map((s) => s.trim()).filter((s) => /^[1-9]\d{0,18}$/.test(s));
+}
+
+/**
+ * Whether this signed-in identity may use the console. A GitHub login can be renamed, and a released name can be taken by someone
+ * else, so when OPS_ALLOWED_GITHUB_IDS is set only the numeric id counts and the login is ignored. With no ids configured the login
+ * allow-list applies, as before (a convenience for local setups; set the ids in production).
+ */
+export function isAllowedOps(who: { login?: string; githubId?: string | null }, env: { OPS_ALLOWED_GITHUB?: string; OPS_ALLOWED_GITHUB_IDS?: string }): boolean {
+  const ids = parseAllowedIds(env.OPS_ALLOWED_GITHUB_IDS);
+  if (ids) return !!who.githubId && ids.includes(who.githubId.trim());
+  return isAllowedLogin(who.login, env.OPS_ALLOWED_GITHUB);
+}
+
 export const isAllowedLogin = (login: string | undefined, raw: string | undefined) => !!login && parseAllowList(raw).includes(login.toLowerCase());
 
 /** Token proving the holder placed this order: HMAC(secret, order id). Returned once at placement. */

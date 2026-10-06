@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HaversineEta, destinationPoint } from "@noir/core";
 import { createLocalEngine, type LocalEngine } from "@noir/engine/local";
 import { Engine, SIM_STATIONS } from "@noir/engine";
-import { createApp, MAX_BODY_BYTES, type Env } from "./app";
+import { sql } from "drizzle-orm";
+import { createApp, DEMO_DEFAULT_IP_DAILY_STEPS, MAX_BODY_BYTES, type Env } from "./app";
 import { createAuth } from "./auth";
-import { MemoryRateLimiter, orderToken, safeEqual } from "./guards";
+import { MemoryRateLimiter, isAllowedOps, orderToken, parseAllowedIds, safeEqual } from "./guards";
 import { API_CSP, API_HEADERS, MAX_SOCKETS_PER_ROOM, PERMISSIONS_POLICY, redact, sameOriginSocket, withSecurityHeaders } from "./security";
 import { headersFor, parseHeadersFile } from "./static-headers";
 
@@ -35,7 +36,7 @@ const build = (over: Partial<Parameters<typeof createApp>[0]> = {}) =>
     devPay: (_e, id) => k.payOrder(id),
     opsSession: async (_e, req) => {
       const login = req.headers.get("x-test-ops");
-      return login ? { login } : null;
+      return login ? { login, githubId: req.headers.get("x-test-github-id") } : null;
     },
     ...over,
   });
@@ -215,6 +216,55 @@ describe("role boundaries, probed", () => {
   });
 });
 
+describe("ops allow-list by numeric GitHub id", () => {
+  // GitHub logins can be renamed, and a released name can be registered by someone else. The numeric id cannot. With
+  // OPS_ALLOWED_GITHUB_IDS set it is the only rule; the login allow-list applies only when no ids are configured.
+  const IDS = { ...ENV, OPS_ALLOWED_GITHUB: "Noir-Cpu", OPS_ALLOWED_GITHUB_IDS: "61392662, 42" };
+  const me = (login: string, id: string | null, env: Env) => call(build(), "/api/ops/me", { headers: { "x-test-ops": login, ...(id ? { "x-test-github-id": id } : {}) }, env });
+
+  it("the listed id gets in, whatever the login has been renamed to", async () => {
+    expect((await me("Noir-Cpu", "61392662", IDS)).status).toBe(200);
+    expect((await me("some-new-name", "61392662", IDS)).status).toBe(200);
+    expect((await me("whoever", "42", IDS)).status).toBe(200);
+  });
+
+  it("an attacker who takes over the old login (the rename attack) is refused: right name, wrong id", async () => {
+    for (const id of ["999", "6139266", "613926620", "", null]) expect((await me("Noir-Cpu", id, IDS)).status, String(id)).toBe(401);
+    expect((await call(build(), "/api/orders", { headers: { "x-test-ops": "Noir-Cpu", "x-test-github-id": "999" }, env: IDS })).status).toBe(401);
+    expect((await call(build(), "/api/dispatch/tick", { method: "POST", headers: { "x-test-ops": "Noir-Cpu", "x-test-github-id": "999" }, env: IDS })).status).toBe(401);
+  });
+
+  it("with no ids configured the login allow-list still applies (the fallback), and a blank value counts as not configured", async () => {
+    for (const raw of [undefined, "", "  "]) {
+      const env = { ...ENV, OPS_ALLOWED_GITHUB_IDS: raw };
+      expect((await me("Noir-Cpu", null, env)).status).toBe(200);
+      expect((await me("stranger", "61392662", env)).status).toBe(401);
+    }
+  });
+
+  it("fails closed: a configured value with no valid id (a typo) lets nobody in, not everybody in by login", async () => {
+    for (const raw of ["Noir-Cpu", "abc", "0", "-5", "1.5", ","]) {
+      const env = { ...ENV, OPS_ALLOWED_GITHUB_IDS: raw };
+      expect((await me("Noir-Cpu", "61392662", env)).status, raw).toBe(401);
+    }
+  });
+
+  it("parsing: trims, drops junk, and keeps big ids as text", () => {
+    expect(parseAllowedIds(undefined)).toBeNull();
+    expect(parseAllowedIds(" ")).toBeNull();
+    expect(parseAllowedIds(" 1, 22 ,x,,333 ")).toEqual(["1", "22", "333"]);
+    expect(isAllowedOps({ login: "a", githubId: " 7 " }, { OPS_ALLOWED_GITHUB_IDS: "7" })).toBe(true);
+    expect(isAllowedOps({ login: "Noir-Cpu" }, { OPS_ALLOWED_GITHUB_IDS: "7" })).toBe(false);
+  });
+
+  it("sign-in refuses a GitHub profile whose id is not listed, before any user row exists, and ignores the login", () => {
+    const auth = createAuth({ DATABASE_URL: ["postgres:", "", "u:p@localhost/db"].join("/"), BETTER_AUTH_SECRET: "x".repeat(40), GITHUB_CLIENT_ID: "id", GITHUB_CLIENT_SECRET: "secret", OPS_ALLOWED_GITHUB: "Noir-Cpu", OPS_ALLOWED_GITHUB_IDS: "61392662" }, "https://example.workers.dev/api/auth/x");
+    const map = (auth.options.socialProviders as any).github.mapProfileToUser as (p: { login: string; id: number }) => { name: string };
+    expect(map({ login: "renamed", id: 61392662 })).toEqual({ name: "renamed" });
+    expect(() => map({ login: "Noir-Cpu", id: 999 })).toThrow(/allow-list/);
+  });
+});
+
 describe("order tokens", () => {
   it("are 128-bit, deterministic per order, different per order and per secret, and never accepted when the server has no secret", async () => {
     const t1 = await orderToken("s1", "order-a");
@@ -317,22 +367,62 @@ describe("rate limits and the demo endpoint under abuse", () => {
     }
   });
 
-  it("FINDING (not fixed, needs a decision): one client can use up the whole day's demo budget for everybody", async () => {
-    // The daily cap is global by design (it bounds Neon compute). Anyone can place orders and pay with the fake provider, so one
-    // person with two orders can spend 400 steps in about 7 minutes at the per-IP limit, and every other visitor then gets 429 daily_cap
-    // until 00:00 UTC. Shown here with a cap of 6.
+  it("one client cannot drain the shared daily cap: it gets its own budget (any number of orders), and a second client still runs a demo", async () => {
+    // The 400-step daily cap is global (it bounds Neon compute). Before the per-client budget, one person with two orders could spend it in
+    // about 7 minutes and every other visitor then got 429 daily_cap. Shown with a client budget of 6 and a global cap of 20.
     const app = build();
-    const attacker = await placePaid(app, "atk");
+    const attacker1 = await placePaid(app, "atk1");
+    const attacker2 = await placePaid(app, "atk2");
     const victim = await placePaid(app, "vic");
-    const env = { ...ENV, DEMO_DAILY_STEP_CAP: "6" };
-    for (let i = 0; i < 6; i++) {
+    const env = { ...ENV, DEMO_IP_DAILY_STEPS: "6", DEMO_DAILY_STEP_CAP: "20" };
+    const hit = (o: { id: string; token: string }, ip: string) => post(app, `/api/orders/${o.id}/demo/step`, {}, { "x-order-token": o.token, "cf-connecting-ip": ip }, env);
+    const codes: number[] = [];
+    for (let i = 0; i < 12; i++) {
       k.clock.now += 2_500;
-      expect((await post(app, `/api/orders/${attacker.id}/demo/step`, {}, { "x-order-token": attacker.token, "cf-connecting-ip": "6.6.6.6" }, env)).status).toBe(200);
+      codes.push((await hit(i % 2 ? attacker1 : attacker2, "6.6.6.6")).status); // alternating orders: the budget is the client's, not the order's
     }
+    expect(codes).toEqual([200, 200, 200, 200, 200, 200, 429, 429, 429, 429, 429, 429]);
+    const over = await hit(attacker1, "6.6.6.6");
+    expect(((await over.json()) as any).error).toBe("ip_daily_cap");
     k.clock.now += 2_500;
-    const r = await post(app, `/api/orders/${victim.id}/demo/step`, {}, { "x-order-token": victim.token, "cf-connecting-ip": "7.7.7.7" }, env);
-    expect(r.status).toBe(429);
-    expect(((await r.json()) as any).error).toBe("daily_cap");
+    const ok = await hit(victim, "7.7.7.7");
+    expect(ok.status).toBe(200); // the shared cap still has room: only 6 of 20 were spent
+    // The key is a hash: the database never holds the visitor's address.
+    const keys = ((await k.db.execute(sql`select day from demo_usage order by day`)) as unknown as { rows: { day: string }[] }).rows.map((r) => r.day);
+    expect(keys.some((d) => d.includes("|ip|"))).toBe(true);
+    expect(keys.join(" ")).not.toMatch(/6\.6\.6\.6|7\.7\.7\.7/);
+    // The per-client counters are only useful for their own day: retention removes them after two.
+    k.clock.now += 3 * 86_400_000;
+    expect((await k.engine.runRetention()).demoUsage).toBe(keys.length);
+    expect(((await k.db.execute(sql`select day from demo_usage`)) as unknown as { rows: unknown[] }).rows).toHaveLength(0);
+  });
+
+  it("the budget per client has a default of 120 and finished orders cost nothing", async () => {
+    const app = build();
+    const o = await placePaid(app, "fin");
+    const env = { ...ENV, DEMO_IP_DAILY_STEPS: "3" };
+    await post(app, `/api/orders/${o.id}/events`, { actor: "customer", type: "order_cancelled" }, { "x-order-token": o.token });
+    for (let i = 0; i < 10; i++) expect((await post(app, `/api/orders/${o.id}/demo/step`, {}, { "x-order-token": o.token, "cf-connecting-ip": "4.4.4.4" }, env)).status).toBe(200);
+    expect(DEMO_DEFAULT_IP_DAILY_STEPS).toBe(120);
+  });
+
+  it("an order stops taking steps at its ceiling (150), with a clear 429, even when the client changes address every time", async () => {
+    // A full run is 39 to 58 steps. Time does not advance in this loop, so the order never finishes; only the ceiling can end it.
+    const rl = new MemoryRateLimiter(1_000_000, 60_000);
+    const app = build({ rateLimiter: () => rl });
+    const { id, token } = await placePaid(app, "ceil");
+    const env = { ...ENV, DEMO_IP_DAILY_STEPS: "1000", DEMO_DAILY_STEP_CAP: "1000" };
+    let last: Response | null = null;
+    let ok = 0;
+    for (let i = 0; i < 160; i++) {
+      last = await post(app, `/api/orders/${id}/demo/step`, {}, { "x-order-token": token, "cf-connecting-ip": `10.0.${Math.floor(i / 250)}.${i % 250}` }, env);
+      if (last.status === 200) ok++;
+    }
+    expect(ok).toBe(150);
+    expect(last!.status).toBe(429);
+    const body = (await last!.json()) as { error: string; message: string };
+    expect(body.error).toBe("step_limit");
+    expect(body.message).toMatch(/as long as it is allowed/);
   });
 });
 

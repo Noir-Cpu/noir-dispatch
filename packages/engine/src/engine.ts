@@ -318,7 +318,9 @@ export class Engine {
     const now = this.clock();
     const locations = await this.store.deleteLocationsBefore(now - (o.locationDays ?? 7) * 86_400_000);
     const simulatedOrders = await this.store.deleteSimulatedOrders(now - (o.simulatedHours ?? 24) * 3_600_000);
-    return { locations, simulatedOrders };
+    // Per-client demo counters (one row per client per day) are only useful for the day they count.
+    const demoUsage = await this.store.deleteDemoUsageBefore(new Date(now - 2 * 86_400_000).toISOString().slice(0, 10));
+    return { locations, simulatedOrders, demoUsage };
   }
 
   /** The engine's clock (virtual in tests and the simulator). */

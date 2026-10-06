@@ -104,6 +104,8 @@ export interface Store {
   advanceDemo(orderId: string, now: number, maxGapMs: number): Promise<{ demoMs: number; steps: number } | null>;
   /** Demo: count one step against the day's cap. False (and no increment) when the cap is already reached. */
   bumpDemoUsage(day: string, cap: number): Promise<boolean>;
+  /** Retention: delete demo_usage counters whose key (a UTC day, optionally followed by "|ip|<hash>") sorts before `day`. Returns rows deleted. */
+  deleteDemoUsageBefore(day: string): Promise<number>;
   recordWebhookEvent(eventId: string, type: string, at: number): Promise<boolean>;
   countWebhookEvents(): Promise<number>;
 }

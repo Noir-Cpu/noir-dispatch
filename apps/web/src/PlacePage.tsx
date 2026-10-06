@@ -51,6 +51,26 @@ export function PlacePage() {
   const outOfRange = !!advice && !advice.ok && !!advice.chosen;
   const suggestion = advice?.nearestInRange?.station;
 
+  // Fifteen stations are too many to scroll past on a phone. Show the chosen one and the two nearest to the pin; the rest are one tap away.
+  const shown = useMemo(() => {
+    const first = ranges.filter((r) => r.station.id === stationId);
+    return [...first, ...ranges.filter((r) => r.station.id !== stationId).slice(0, 2)].sort((x, y) => x.distanceKm - y.distanceKm);
+  }, [ranges, stationId]);
+  const more = useMemo(() => ranges.filter((r) => !shown.includes(r)), [ranges, shown]);
+  const renderStation = ({ station: s, distanceKm, inRange }: (typeof ranges)[number]) => (
+    <label key={s.id} className={`choice${inRange ? "" : " out"}`}>
+      <input type="radio" name="station" value={s.id} checked={s.id === stationId} disabled={!inRange && s.id !== stationId} onChange={() => setStationId(s.id)} />
+      <span>
+        <strong>{s.name}</strong>
+        <span className="meta">
+          {" "}
+          {inRange ? `${distanceKm.toFixed(1)} km from your pin` : `out of range: ${distanceKm.toFixed(1)} km from your pin, limit ${radiusKm} km`} · rating {s.rating.toFixed(1)} ·{" "}
+          {money(s.prices[fuel])}/L {fuel === "diesel" ? "diesel" : "petrol 95"}
+        </span>
+      </span>
+    </label>
+  );
+
   const place = useMutation({
     mutationFn: () =>
       api.place({ customerId, customerName: "Web customer", stationId, fuel, litres, dropoff, note: note || undefined }, key.current),
@@ -74,7 +94,7 @@ export function PlacePage() {
   );
   // Fit the chosen station's whole circle and the pin; refit when the chosen station changes, not on every pin move.
   const fitTo = useMemo(
-    () => (station ? [dropoff, ...[0, 90, 180, 270].map((b) => destinationPoint(station, b, radiusKm * 1000))] : [dropoff]),
+    () => (station ? [dropoff, ...[0, 90, 180, 270].map((b) => destinationPoint(station, b, radiusKm * 1000))] : []), // empty = still loading stations: the map keeps its default view
     [station, dropoff.lat, dropoff.lng, radiusKm],
   );
 
@@ -113,9 +133,34 @@ export function PlacePage() {
                 </option>
               ))}
             </select>
-            <span className="hint">Pick a place from the list, tap the map, or enter coordinates. Franschhoek is outside every station&apos;s {radiusKm} km radius, if you want to see what that looks like.</span>
+            <span className="hint">Pick a place from the list, enter coordinates, or tap the map further down. Franschhoek is outside every station&apos;s {radiusKm} km radius, if you want to see what that looks like.</span>
           </label>
 
+          <CoordinateEntry onUse={(lat, lng) => setCustom({ lat, lng })} />
+          {(outOfRange || rejected) && (
+            <div className="notice" role="alert" data-testid="range-message">
+              <p>{rejected ?? advice?.message}</p>
+              {suggestion && suggestion.id !== stationId && (
+                <button type="button" onClick={() => setStationId(suggestion.id)}>
+                  Use {suggestion.name}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+        <fieldset>
+          <legend>Station</legend>
+          {stations.isPending && <p className="meta station-skeleton">Loading stations…</p>}
+          {shown.map(renderStation)}
+          {more.length > 0 && (
+            <details className="more-stations">
+              <summary>Show {more.length} more stations</summary>
+              {more.map(renderStation)}
+            </details>
+          )}
+        </fieldset>
+        <section className="stack" aria-labelledby="onmap">
+          <h2 id="onmap">Check it on the map</h2>
           <LiveMap pins={pins} circles={circles} label="Map of stations, their delivery radius and your drop-off point" onPick={(lat, lng) => setCustom({ lat, lng })} fitTo={fitTo} fitKey={`${stationId}|${custom ? "c" : sample}|${stations.data?.length ?? 0}`} centerRef={centerRef} describedBy={helpId} />
           <p id={helpId} className="hint">
             Tap the map to drop the pin. Without a touch screen: focus the map, move it with the arrow keys (plus and minus zoom) and press Enter to drop the pin on the cross in the middle.
@@ -125,7 +170,6 @@ export function PlacePage() {
               Drop pin at the cross
             </button>
           </div>
-          <CoordinateEntry onUse={(lat, lng) => setCustom({ lat, lng })} />
           <MapLegend
             items={[
               { kind: "station", label: "Station" },
@@ -142,34 +186,7 @@ export function PlacePage() {
           />
           <p className="sr-only" role="status" aria-live="polite">Drop-off: {dropoff.label}</p>
 
-          {(outOfRange || rejected) && (
-            <div className="notice" role="alert" data-testid="range-message">
-              <p>{rejected ?? advice?.message}</p>
-              {suggestion && suggestion.id !== stationId && (
-                <button type="button" onClick={() => setStationId(suggestion.id)}>
-                  Use {suggestion.name}
-                </button>
-              )}
-            </div>
-          )}
         </section>
-        <fieldset>
-          <legend>Station</legend>
-          {stations.isPending && <p className="meta station-skeleton">Loading stations…</p>}
-          {ranges.map(({ station: s, distanceKm, inRange }) => (
-            <label key={s.id} className={`choice${inRange ? "" : " out"}`}>
-              <input type="radio" name="station" value={s.id} checked={s.id === stationId} disabled={!inRange && s.id !== stationId} onChange={() => setStationId(s.id)} />
-              <span>
-                <strong>{s.name}</strong>
-                <span className="meta">
-                  {" "}
-                  {inRange ? `${distanceKm.toFixed(1)} km from your pin` : `out of range: ${distanceKm.toFixed(1)} km from your pin, limit ${radiusKm} km`} · rating {s.rating.toFixed(1)} ·{" "}
-                  {money(s.prices[fuel])}/L {fuel === "diesel" ? "diesel" : "petrol 95"}
-                </span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
 
         <div className="row">
           <label className="field">

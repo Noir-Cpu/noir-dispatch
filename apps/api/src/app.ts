@@ -4,11 +4,17 @@ import { zValidator } from "@hono/zod-validator";
 import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import { ACTORS, DEMO_TIME_COMPRESSION, FUELS, StraightLineRouteProvider, WebhookSignatureError, availableActions, isDemoDriverId, type Actor, type RouteProvider } from "@noir/core";
+import { ACTORS, DEMO_TIME_COMPRESSION, FUELS, hmacHex, StraightLineRouteProvider, WebhookSignatureError, availableActions, isDemoDriverId, type Actor, type RouteProvider } from "@noir/core";
 import { DEMO_DEFAULT_DAILY_STEP_CAP, DemoRunner, Engine, EngineError, type DemoErrorCode } from "@noir/engine";
 import { tracing, type OtelEnv } from "./otel";
-import { MemoryRateLimiter, isAllowedLogin, orderToken, safeEqual, type RateLimiter } from "./guards";
+import { MemoryRateLimiter, isAllowedOps, orderToken, safeEqual, type RateLimiter } from "./guards";
 import { redact, sameOriginSocket, securityHeaders } from "./security";
+
+/**
+ * Demo steps one client (by network address) may take per UTC day. A full run is 39 to 58 steps (ADR 0016), so 120 is two or three runs.
+ * The global cap (DEMO_DAILY_STEP_CAP, 400) stays as the backstop, but no single client can spend it: it takes at least four clients.
+ */
+export const DEMO_DEFAULT_IP_DAILY_STEPS = 120;
 
 export type Env = OtelEnv & {
   DATABASE_URL?: string;
@@ -23,6 +29,8 @@ export type Env = OtelEnv & {
   /** Shared secret held by the simulator runner. */
   SIM_TOKEN?: string;
   OPS_ALLOWED_GITHUB?: string;
+  /** Comma-separated numeric GitHub user ids. When set it replaces the login allow-list (ids cannot be renamed or reused). */
+  OPS_ALLOWED_GITHUB_IDS?: string;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   GITHUB_CLIENT_ID?: string;
@@ -32,6 +40,8 @@ export type Env = OtelEnv & {
   DELIVERY_RADIUS_KM?: string;
   /** Plain wrangler var: global cap on demo steps per UTC day (bounds Neon compute). Default 400. */
   DEMO_DAILY_STEP_CAP?: string;
+  /** Plain wrangler var: demo steps one client address may take per UTC day. Default 120. */
+  DEMO_IP_DAILY_STEPS?: string;
   // Durable Object namespace and rate-limit binding; typed loosely so app.ts stays runtime-agnostic.
   TRACKING?: unknown;
   RATE_LIMIT?: unknown;
@@ -43,7 +53,7 @@ export type AppServices = {
   /** Workers only: hand a WebSocket upgrade for one order to its Durable Object. */
   trackUpgrade?: (env: Env, orderId: string, req: Request) => Promise<Response>;
   /** Signed-in ops user for this request, or null. */
-  opsSession?: (env: Env, req: Request) => Promise<{ login: string } | null>;
+  opsSession?: (env: Env, req: Request) => Promise<{ login: string; githubId?: string | null } | null>;
   /** Auth handler mounted at /api/auth/* (Better Auth). */
   authHandler?: (env: Env, req: Request) => Promise<Response>;
   rateLimiter?: (env: Env) => RateLimiter | undefined;
@@ -122,6 +132,7 @@ export function createApp(services: AppServices) {
   const memory = new MemoryRateLimiter(60, 60_000);
   const demoMemory = new MemoryRateLimiter(60, 60_000);
   const demoCapMemo = { day: null as string | null }; // per isolate: once today's cap is hit, stop asking the database
+  const ipCapMemo = new Map<string, boolean>(); // per isolate: clients already over their own daily budget
 
   app.use("*", tracing());
   app.use("*", securityHeaders());
@@ -146,7 +157,7 @@ export function createApp(services: AppServices) {
     c.set("engine", engine);
     c.set("sim", safeEqual(c.req.header("x-sim-token"), env.SIM_TOKEN));
     const ops = services.opsSession ? await services.opsSession(env, c.req.raw).catch(() => null) : null;
-    c.set("ops", ops && isAllowedLogin(ops.login, env.OPS_ALLOWED_GITHUB) ? ops : null);
+    c.set("ops", ops && isAllowedOps(ops, env) ? { login: ops.login } : null);
     return next();
   });
 
@@ -267,8 +278,23 @@ export function createApp(services: AppServices) {
     const limiter = services.rateLimiter?.(c.env ?? {}) ?? demoMemory;
     const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
     if (!(await limiter.allow(`demo-ip:${ip}`)) || !(await limiter.allow(`demo-order:${id}`))) return c.json({ error: "rate_limited" }, 429);
-    if (!(await c.var.engine.store.getOrder(id))) return c.json({ error: "not_found" }, 404);
+    const order = await c.var.engine.store.getOrder(id);
+    if (!order) return c.json({ error: "not_found" }, 404);
     if (!(await tokenOk(c, id, c.req.header("x-order-token")))) return c.json({ error: "forbidden", message: "not your order" }, 403);
+    // Per-client daily budget, so one visitor cannot spend the global cap that everyone shares. Stored in demo_usage under the key
+    // "<day>|ip|<hash>" (that column is free text, so no migration), through the same one-statement guarded counter as the global cap.
+    // The address is hashed with the server secret: the database never holds a visitor's IP. Finished orders are free (they only report "done").
+    if (order.view.state !== "completed" && order.view.state !== "cancelled") {
+      const perIp = Number(c.env?.DEMO_IP_DAILY_STEPS);
+      const day = new Date((services.demoClock ?? (() => c.var.engine.now()))()).toISOString().slice(0, 10);
+      const who = (await hmacHex(c.env?.ORDER_TOKEN_SECRET ?? "", `demo-ip:${ip}`)).slice(0, 16);
+      const key = `${day}|ip|${who}`;
+      if (ipCapMemo.get(key) || !(await c.var.engine.store.bumpDemoUsage(key, Number.isFinite(perIp) && perIp > 0 ? perIp : DEMO_DEFAULT_IP_DAILY_STEPS))) {
+        if (ipCapMemo.size > 5_000) ipCapMemo.clear();
+        ipCapMemo.set(key, true); // per isolate: once a client is over, stop asking the database
+        return c.json({ error: "ip_daily_cap", message: "This device has used its demo steps for today (about two full demo runs). It resets at midnight UTC." }, 429);
+      }
+    }
     const cap = Number(c.env?.DEMO_DAILY_STEP_CAP);
     const runner = new DemoRunner(c.var.engine, services.routes?.(c.env ?? {}) ?? new StraightLineRouteProvider(), {
       dailyStepCap: Number.isFinite(cap) && cap > 0 ? cap : DEMO_DEFAULT_DAILY_STEP_CAP,
