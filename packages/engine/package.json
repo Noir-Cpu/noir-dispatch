@@ -12,8 +12,8 @@
     "@noir/db": "*"
   },
   "devDependencies": {
-    "vitest": "^5",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "vitest": "^5.0.3"
   },
   "exports": {
     ".": "./src/index.ts",

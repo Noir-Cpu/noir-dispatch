@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.11",
-    "vitest": "^5"
+    "vitest": "^5.0.3"
   },
   "exports": {
     ".": "./src/index.ts",

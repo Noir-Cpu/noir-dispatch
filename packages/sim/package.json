@@ -2,13 +2,22 @@
   "name": "@noir/sim",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "sim": "tsx src/cli.ts",
     "sim:http": "tsx src/cli-http.ts"
   },
-  "dependencies": { "@noir/core": "*", "@noir/engine": "*" },
-  "devDependencies": { "@types/node": "^22.0.0", "tsx": "^4.19.0", "vitest": "^5" }
+  "dependencies": {
+    "@noir/core": "*",
+    "@noir/engine": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.19.0",
+    "vitest": "^5.0.3"
+  }
 }
