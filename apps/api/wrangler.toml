@@ -21,9 +21,10 @@ class_name = "TrackingRoom"
 tag = "v1"
 new_sqlite_classes = ["TrackingRoom"]
 
-# Dispatch tick. Uses 1 of the 5 cron triggers on the account.
+# Safety-net dispatch and sweep, hourly (dispatch also runs inline on every order and driver event). A per-minute cron
+# kept Neon compute awake 24/7, which would use the free 100 CU-hours in about 17 days. Uses 1 of the 5 cron triggers.
 [triggers]
-crons = ["* * * * *"]
+crons = ["0 * * * *"]
 
 # Per-client rate limit for every request that declares a role (see apps/api/src/app.ts `limited`).
 [[ratelimits]]

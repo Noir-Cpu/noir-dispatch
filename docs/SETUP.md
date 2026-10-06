@@ -77,7 +77,7 @@ Try one burst by hand first:
 SIM_TOKEN='<the token>' npm run sim:http -w @noir/sim -- --url https://noir-dispatch-api.noir-cpu.workers.dev --seed 1 --seconds 60
 ```
 
-Then enable the schedule: `gh variable set SIMULATOR_ENABLED --repo Noir-Cpu/noir-dispatch --body true` (turn it off with `--body false`). It runs every 15 minutes; see the README "Request budget" for the arithmetic.
+Then enable the schedule: `gh variable set SIMULATOR_ENABLED --repo Noir-Cpu/noir-dispatch --body true` (turn it off with `--body false`). It runs every 30 minutes; see the README "Request budget" for the request and Neon compute arithmetic.
 
 ## 8. Automate deploys
 

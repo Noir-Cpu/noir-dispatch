@@ -48,7 +48,8 @@ const app = createApp(services);
 
 const handler = {
   fetch: app.fetch,
-  // Once a minute: assign waiting orders and cancel ones that waited too long. Daily at 03:00 UTC: retention.
+  // Hourly safety net: assign waiting orders and cancel ones that waited too long (dispatch also runs inline on order and
+  // driver events). Daily at 03:00 UTC: retention. Not per minute: that keeps Neon compute awake around the clock.
   async scheduled(event: ScheduledController, env: Env) {
     const engine = buildEngine(env);
     if (!engine) return;

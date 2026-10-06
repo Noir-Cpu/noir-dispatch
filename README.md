@@ -70,7 +70,8 @@ npm run e2e            # Playwright (installs nothing; run `npx playwright insta
 Arithmetic, not a measurement of production:
 
 - One simulator burst is capped at 400 requests. Run in-process against the app (12 bursts, 4 virtual minutes each, 6 drivers, 3 simulated orders kept in flight) it made **226 to 239 requests** per burst, of which 151 to 164 were location pings.
-- Every 15 minutes is 96 bursts a day: **about 23,000 requests/day typical (96 x 239), 38,400 at the cap (96 x 400)**.
+- Every 30 minutes is 48 bursts a day: **about 12,700 requests/day typical (48 x 265, measured on one live burst), 19,200 at the cap (48 x 400)**, plus 24 hourly cron runs.
+- **Neon compute is the tighter limit, not requests.** The free plan gives 100 CU-hours per project per month and compute scales to zero after 5 idle minutes. Assuming the smallest size (0.25 CU, not checked against the console), each 4-minute burst keeps it awake about 9 minutes, so 48 bursts a day is about 30% duty, roughly 55 CU-hours a month, plus the hourly cron (about 15) and visitors. That is inside 100 but not by a wide margin: watch Neon's usage page. A per-minute cron, which this project originally had, would have kept compute on 24/7 (about 180 CU-hours) and exhausted the allowance in about 17 days.
 - The once-a-minute cron adds 1,440 invocations/day.
 - That leaves about 60,000 requests/day for visitors and ops. One open ops tab polls twice every 5 s (about 35,000/day if left open for 24 h); the order page polls every 3 s until delivery. These are estimates from the polling intervals in the code, not measured.
 - Location pings to Durable Objects are separate DO requests (roughly the ping count above per day: about 15,000); the Free DO limits were not checked against this.
