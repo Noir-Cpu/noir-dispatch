@@ -66,7 +66,7 @@ export function useDemo(orderId: string, onStep: (s: DemoStep) => void) {
           err.status === 404
             ? "The demo is not switched on for this site."
             : err.status === 429
-              ? err.code === "daily_cap" || err.code === "step_limit"
+              ? err.code === "daily_cap" || err.code === "step_limit" || err.code === "ip_daily_cap"
                 ? err.message
                 : "Too many requests from this device. Wait a moment and press Run demo again."
               : err.status === 503

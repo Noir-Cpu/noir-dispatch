@@ -87,7 +87,8 @@ export function OrderPage() {
     return from ? [{ id: "straight", kind: "straight", points: [from, o.dropoff] }] : [];
   }, [o, route, driverLive, station]);
 
-  const fitTo = useMemo(() => [...(station ? [station] : []), ...(o ? [o.dropoff] : []), ...(driverLive ? [driverLive] : [])], [station, o, driverLive]);
+  // Empty until the station is known, so the map is not fitted to the drop-off alone and then moved.
+  const fitTo = useMemo(() => (station && o ? [station, o.dropoff, ...(driverLive ? [driverLive] : [])] : []), [station, o, driverLive]);
 
   // Polite announcements for screen readers, only when something changes that matters: the state, and the driver coming within 2 km, 1 km and 500 m.
   // (The "Live: driver ..." line updates every few seconds and is deliberately not a live region.)

@@ -94,6 +94,8 @@ export function LiveMap({
   const lineLayers = useRef(new Map<string, L.Polyline>());
   const remLayers = useRef(new Map<string, L.Polyline>());
   const raf = useRef(0);
+  const fittedOnce = useRef(false); // the first fit jumps; later ones may animate
+
   const fittedKey = useRef<string | null>(null);
   const pick = useRef(onPick);
   pick.current = onPick;
@@ -102,6 +104,9 @@ export function LiveMap({
     // Leaflet's own zoom, pan and fade animations are switched off for people who asked for less motion.
     const calm = reducedMotion();
     const m = L.map(el.current!, { center: [-33.94, 18.5], zoom: 10, keyboard: true, zoomAnimation: !calm, fadeAnimation: !calm, markerZoomAnimation: !calm, inertia: !calm });
+    // Tiles start loading as soon as the map exists, for the default view (the Cape Town area most orders are in), so the request does not
+    // wait for station data. The first fit below is skipped until the caller has its points, so the view is not first sent somewhere
+    // else (and its tiles fetched) and then moved.
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -127,6 +132,7 @@ export function LiveMap({
       map.current = null;
       for (const x of [mk, an, ci, li, re, ik]) x.clear();
       fittedKey.current = null;
+      fittedOnce.current = false;
     };
   }, []);
 
@@ -285,12 +291,14 @@ export function LiveMap({
   // Fit once, then again only when the caller says the subject changed (a driver appeared, another station chosen).
   useEffect(() => {
     const m = map.current;
+    if (fitTo && fitTo.length === 0) return; // the caller is still waiting for its data: keep the default view rather than fit to a partial picture
     const pts = fitTo && fitTo.length > 0 ? fitTo : pins.map((p) => ({ lat: p.lat, lng: p.lng }));
     if (!m || pts.length === 0) return;
     const key = fitKey ?? "once";
     if (fittedKey.current === key) return;
     fittedKey.current = key;
-    m.fitBounds(L.latLngBounds(pts.map((p) => [p.lat, p.lng] as [number, number])).pad(0.25), { maxZoom: 15, animate: !reducedMotion() });
+    m.fitBounds(L.latLngBounds(pts.map((p) => [p.lat, p.lng] as [number, number])).pad(0.25), { maxZoom: 15, animate: !reducedMotion() && fittedOnce.current });
+    fittedOnce.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey, fitTo?.length, pins.length > 0]);
 

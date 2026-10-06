@@ -16,7 +16,7 @@ DATABASE_URL='<direct url>' npm run seed -w @noir/engine
 
 ## Plain settings (no secret needed)
 
-`apps/api/wrangler.toml` has `[vars]`: `DELIVERY_RADIUS_KM` (default 12) and `DEMO_DAILY_STEP_CAP` (default 400 demo steps per UTC day, about 10 typical runs; see ADR 0016 before raising it). "Run demo" works only with `DEV_TOOLS=1` (the secret from step 4) and the fake payment provider. Routes come from OSRM's public demo server with no key; set nothing. Locally, routes are straight lines unless you start the dev server with `ROUTE_PROVIDER=osrm`.
+`apps/api/wrangler.toml` has `[vars]`: `DELIVERY_RADIUS_KM` (default 12), `DEMO_DAILY_STEP_CAP` (default 400 demo steps per UTC day, about 10 typical runs; see ADR 0016 before raising it) and `DEMO_IP_DAILY_STEPS` (default 120 demo steps per client address per day, so one visitor cannot use up the shared cap). "Run demo" works only with `DEV_TOOLS=1` (the secret from step 4) and the fake payment provider. Routes come from OSRM's public demo server with no key; set nothing. Locally, routes are straight lines unless you start the dev server with `ROUTE_PROVIDER=osrm`.
 
 ## 3. GitHub OAuth app (ops sign-in)
 
@@ -37,7 +37,9 @@ npx wrangler secret put GITHUB_CLIENT_SECRET
 SIM=$(openssl rand -hex 32); echo "$SIM" | npx wrangler secret put SIM_TOKEN   # keep $SIM for step 5
 echo 1 | npx wrangler secret put DEV_TOOLS                # public demo "Pay with test card"; works only with the fake provider
 # optional
-echo 'Noir-Cpu,someone-else' | npx wrangler secret put OPS_ALLOWED_GITHUB   # default is just Noir-Cpu
+echo 'Noir-Cpu,someone-else' | npx wrangler secret put OPS_ALLOWED_GITHUB   # default is just Noir-Cpu (matches the renamable login)
+gh api users/Noir-Cpu --jq .id                                                  # your numeric GitHub id (61392662 for Noir-Cpu)
+echo 61392662 | npx wrangler secret put OPS_ALLOWED_GITHUB_IDS                  # recommended: ops by id; when set, logins are ignored (ADR 0010)
 npx wrangler secret put GRAFANA_OTLP_ENDPOINT
 npx wrangler secret put GRAFANA_OTLP_AUTH
 npx wrangler secret put SENTRY_DSN_API

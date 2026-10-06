@@ -22,8 +22,13 @@ import type { Engine, SubmitInput } from "./engine";
 
 /** The demo clock never advances more than this per step, so a hidden or throttled tab cannot make the car jump. */
 export const DEMO_MAX_GAP_MS = 6_000;
-/** A demo order accepts at most this many steps (6+ minutes at one step per 2 s), whatever the clients do. */
-export const DEMO_MAX_STEPS_PER_ORDER = 300;
+/**
+ * A demo order accepts at most this many steps, whatever the clients do. A run takes about (330 + route seconds) / 25 steps at
+ * one step per 2.5 s and 10x speed: 39 steps for a 6 km trip, 58 for 11.5 km (measured, ADR 0016). A 30-minute route is 85 steps and a
+ * 60-minute route (about 30 km, far beyond the 12 km delivery radius) 133. Two tabs on one order double the steps per second but not the
+ * demo clock. 150 covers all of that; the previous 300 let one order burn three quarters of the daily cap.
+ */
+export const DEMO_MAX_STEPS_PER_ORDER = 150;
 export const DEMO_DEFAULT_DAILY_STEP_CAP = 400;
 /** Drivers in the demo pool: demo-drv-01 to demo-drv-08. */
 export const DEMO_POOL_SIZE = 8;

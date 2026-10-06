@@ -104,7 +104,9 @@ main:focus { outline: none; }
 /* Swatches in the legend stand for lines drawn on the (always light) map, so they sit on a light chip in both colour schemes. */
 .legend-line { background: #fff; padding: 2px 3px; border-radius: 2px; box-sizing: content-box; }
 .legend-glyph { padding: 0; }
-.station-skeleton { min-height: 22rem; }
+.station-skeleton { min-height: 18rem; } /* about the height of the three stations the list shows once loaded */
+@media (min-width: 720px) { .station-skeleton { min-height: 14rem; } }
+.more-stations summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-family: var(--font-mono); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .coords summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-family: var(--font-mono); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .coords .row { align-items: end; }
 .coords input { width: 11rem; max-width: 100%; }

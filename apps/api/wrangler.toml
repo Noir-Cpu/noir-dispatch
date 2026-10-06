@@ -15,6 +15,8 @@ run_worker_first = ["/api/*"]
 DELIVERY_RADIUS_KM = "12"
 # Global cap on "Run demo" steps per UTC day. This is what bounds Neon compute spent on demos (ADR 0016). About 40 steps per typical run (measured: 39 for a 6 km trip).
 DEMO_DAILY_STEP_CAP = "400"
+# Demo steps one client address may take per UTC day (hashed, stored in demo_usage). A full run is 39 to 58 steps, so 120 is two or three runs. The global cap above stays as the backstop.
+DEMO_IP_DAILY_STEPS = "120"
 
 [observability]
 enabled = true
