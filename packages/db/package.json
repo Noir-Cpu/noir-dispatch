@@ -9,7 +9,7 @@
     "migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite": "^0.5.11",
     "@neondatabase/serverless": "^0.10.0",
     "@noir/core": "*",
     "drizzle-orm": "^0.45.4"
