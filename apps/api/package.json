@@ -17,8 +17,8 @@
     "@noir/db": "*",
     "@noir/engine": "*",
     "@noir/sim": "*",
-    "@sentry/cloudflare": "^11.8.0",
-    "better-auth": "^1.7.10",
+    "@sentry/cloudflare": "^11.9.0",
+    "better-auth": "^1.7.12",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",
     "ws": "^8.22.0",
@@ -30,6 +30,6 @@
     "@types/ws": "^8.5.0",
     "tsx": "^4.19.0",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.152.0"
   }
 }
