@@ -89,11 +89,25 @@ export async function runBurst(partial: Partial<HttpSimConfig> & Pick<HttpSimCon
     const gap = 1000 / cfg.maxRps - (now() - lastCall);
     if (gap > 0) await sleep(gap);
     lastCall = now();
-    const res = await f(`${cfg.baseUrl}/api${path}`, {
+    const init = {
       method,
       headers: { "content-type": "application/json", "x-sim-token": cfg.token, ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    };
+    // A dropped connection (ECONNRESET at the edge) is transient: retry it rather than fail the whole burst.
+    // Repeats are safe: order creation carries an idempotency key, and a repeated transition gets a 409 that callers tolerate.
+    let res: Response;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        res = await f(`${cfg.baseUrl}/api${path}`, init);
+        break;
+      } catch (e) {
+        if (attempt >= NETWORK_ATTEMPTS || requests >= cfg.maxRequests) throw e;
+        requests++;
+        cfg.log?.(`${method} ${path}: network error (${String((e as { cause?: unknown }).cause ?? e)}), retrying`);
+        await sleep(500 * attempt);
+      }
+    }
     if (res.status === 204) return undefined as T;
     const json = (await res.json().catch(() => ({}))) as T & { error?: string };
     if (!res.ok) throw new HttpError(res.status, `${method} ${path}: ${(json as { error?: string }).error ?? res.status}`);
@@ -230,5 +244,6 @@ function tolerate(e: unknown) {
   if (e instanceof HttpError && [403, 404, 409, 422].includes(e.status)) return;
   throw e;
 }
+const NETWORK_ATTEMPTS = 3;
 const driverId = (i: number) => `sim-drv-${String(i).padStart(2, "0")}`;
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
